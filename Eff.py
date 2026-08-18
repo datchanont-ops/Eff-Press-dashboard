@@ -18,7 +18,7 @@ def load_and_prep_data(file):
         df_pd = pd.read_excel(xls, 'pd')
         df_target = pd.read_excel(xls, ' rou capday')
 
-        # ดึงข้อมูล (เพิ่ม Entry Date และ Time of Entry เพื่อไว้เรียงลำดับหาการเปลี่ยน Part)
+        # ดึงข้อมูล
         df = df_pd[['Material', 'Document Header Text', 'Qty in Un. of Entry', 'Posting Date', 'Entry Date', 'Time of Entry']].copy()
 
         def extract_machine(text):
@@ -153,6 +153,10 @@ if uploaded_file is not None:
         # --- คำนวณเป้าหมายที่ปรับแล้ว ---
         df['ตัวคูณกะสุทธิ'] = df[['ตัวคูณกะ_Date', 'ตัวคูณกะ_Machine']].min(axis=1)
 
+        # 📌 เพิ่มคอลัมน์แปลงตัวคูณกลับเป็นชื่อกะ เพื่อนำไปแสดงในตาราง
+        reverse_shift_mapping = {1.0: "3 กะ", 0.67: "2 กะ", 0.5: "1.5 กะ"}
+        df['จำนวนกะ'] = df['ตัวคูณกะสุทธิ'].map(reverse_shift_mapping)
+
         # 1. เป้าหมายตั้งต้น * ตัวคูณกะสุทธิ * OEE
         df['เป้าหมายก่อนหักSetup'] = df['เป้าต่อวัน(3กะ)'] * df['ตัวคูณกะสุทธิ'] * oee_multiplier
         
@@ -179,7 +183,7 @@ if uploaded_file is not None:
         if selected_parts:
             df = df[df['Part'].isin(selected_parts)]
 
-        # --- 5. แสดงผลตัวชี้วัด (Metrics) แบบดั้งเดิม (ตามที่ต้องการ) ---
+        # --- 5. แสดงผลตัวชี้วัด (Metrics) แบบดั้งเดิม ---
         st.markdown("---")
         total_actual = df['actual_qty'].sum()
         total_target_original = df['เป้าต่อวัน(3กะ)'].sum()
@@ -237,7 +241,8 @@ if uploaded_file is not None:
         # --- 7. ตารางข้อมูลดิบ และปุ่ม Export ---
         st.subheader("📋 รายละเอียดข้อมูลการผลิต (Data Table)")
         
-        display_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
+        # 📌 เพิ่มคอลัมน์ 'จำนวนกะ' เข้าไปใน Data Table
+        display_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
         display_df = display_df.sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
         
         st.dataframe(
@@ -246,6 +251,7 @@ if uploaded_file is not None:
             column_config={
                 "actual_qty": st.column_config.NumberColumn("ยอดผลิตจริง"),
                 "เป้าต่อวัน(3กะ)": st.column_config.NumberColumn("เป้า 3 กะ"),
+                "จำนวนกะ": st.column_config.TextColumn("จำนวนกะ"),
                 "ตัวคูณกะสุทธิ": st.column_config.NumberColumn("อัตราส่วนกะสุทธิ"),
                 "Setup_Count": st.column_config.NumberColumn("จำนวนครั้งเปลี่ยน Part"),
                 "เป้าหมายที่ปรับแล้ว": st.column_config.NumberColumn("เป้าสุทธิ"),
