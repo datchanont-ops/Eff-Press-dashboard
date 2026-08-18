@@ -7,16 +7,36 @@ from plotly.subplots import make_subplots
 # --- ตั้งค่าหน้าจอ Streamlit ---
 st.set_page_config(page_title="Press Daily Production Dashboard", layout="wide")
 
-# --- ฟังก์ชันโหลดและเตรียมข้อมูล ---
+# --- 1. ฟังก์ชันโหลดไฟล์เป้าหมาย (หลังบ้าน) ---
 @st.cache_data
-def load_and_prep_data(file):
+def load_target_data():
+    try:
+        # ระบบจะพยายามหาไฟล์ target.xlsx ในโฟลเดอร์โดยอัตโนมัติ
+        df_target = pd.read_excel('target.xlsx')
+        
+        # จัดการชื่อคอลัมน์ให้ตรงกับระบบ
+        if 'Material' in df_target.columns:
+            df_target = df_target.rename(columns={'Material': 'Part', 'cap/day': 'เป้าต่อวัน(3กะ)'})
+        else:
+            # กรณีไม่ได้ตั้งชื่อหัวคอลัมน์ จะดึงคอลัมน์ที่ 1 และ 2 มาใช้เลย
+            df_target.columns = ['Part', 'เป้าต่อวัน(3กะ)']
+            
+        df_target.columns = df_target.columns.str.strip()
+        return df_target, None
+    except Exception as e:
+        return None, "❌ **ไม่พบไฟล์เป้าหมาย:** กรุณาสร้างไฟล์เป้าหมายการผลิต ตั้งชื่อว่า `target.xlsx` แล้วนำมาวางไว้ในโฟลเดอร์เดียวกับโปรแกรมครับ"
+
+# --- 2. ฟังก์ชันโหลดไฟล์ผลิตรายวัน (จากการอัปโหลด) ---
+@st.cache_data
+def load_daily_data(file, df_target):
     try:
         xls = pd.ExcelFile(file)
-        if 'pd' not in xls.sheet_names or ' rou capday' not in xls.sheet_names:
-            return None, "Error: ไม่พบชีต 'pd' หรือ ' rou capday' ในไฟล์ที่อัปโหลด โปรดตรวจสอบไฟล์อีกครั้ง"
         
-        df_pd = pd.read_excel(xls, 'pd')
-        df_target = pd.read_excel(xls, ' rou capday')
+        # ถ้าระบบเจอชีตชื่อ pd จะดึงมา ถ้าไม่เจอจะดึง 'ชีตแรกสุด' ของไฟล์แทน (สะดวกมาก)
+        if 'pd' in xls.sheet_names:
+            df_pd = pd.read_excel(xls, 'pd')
+        else:
+            df_pd = pd.read_excel(xls, 0)
 
         # ดึงข้อมูล
         df = df_pd[['Material', 'Document Header Text', 'Qty in Un. of Entry', 'Posting Date', 'Entry Date', 'Time of Entry']].copy()
@@ -54,26 +74,33 @@ def load_and_prep_data(file):
             Setup_Count=('Is_Setup', 'sum')
         )
 
-        # นำเป้าการผลิตมาเชื่อม
-        df_target = df_target.rename(columns={'Material': 'Part', 'cap/day': 'เป้าต่อวัน(3กะ)'})
-        df_target.columns = df_target.columns.str.strip()
-        
+        # นำเป้าการผลิตจากไฟล์หลังบ้านมาเชื่อม
         df_final = pd.merge(df_grouped, df_target, on='Part', how='left')
         df_final['เป้าต่อวัน(3กะ)'] = df_final['เป้าต่อวัน(3กะ)'].fillna(0)
 
         return df_final, None
     except Exception as e:
-        return None, f"เกิดข้อผิดพลาดในการอ่านไฟล์: {e}"
+        return None, f"เกิดข้อผิดพลาดในการอ่านไฟล์รายวัน: {e}"
 
+# ==========================================
 # --- UI หลักของ Dashboard ---
+# ==========================================
 st.title("🏭 Press Daily Production Dashboard")
 
-# 1. แถบเมนูด้านซ้าย: อัปโหลดไฟล์
-st.sidebar.header("📂 อัปโหลดไฟล์ข้อมูล")
-uploaded_file = st.sidebar.file_uploader("เลือกไฟล์ Excel (เฉพาะไฟล์ data.xlsx)", type=["xlsx"])
+# โหลดข้อมูลเป้าหมายจากหลังบ้านทันทีที่เปิดเว็บ
+df_target, target_error = load_target_data()
+
+if target_error:
+    st.error(target_error)
+    st.stop() # หยุดการทำงานถ้าระบบหาไฟล์เป้าหมายไม่เจอ
+
+# 1. แถบเมนูด้านซ้าย: อัปโหลดไฟล์รายวัน
+st.sidebar.header("📂 อัปโหลดยอดผลิตรายวัน")
+st.sidebar.caption("อัปโหลดเฉพาะไฟล์ข้อมูลผลิต (ไม่ต้องมีชีตเป้าหมายแล้ว)")
+uploaded_file = st.sidebar.file_uploader("เลือกไฟล์ Excel", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
-    df, error = load_and_prep_data(uploaded_file)
+    df, error = load_daily_data(uploaded_file, df_target)
     
     if error:
         st.error(error)
@@ -83,7 +110,7 @@ if uploaded_file is not None:
         # --- แสดงช่วงวันที่ของ Data Base ---
         min_date = df['วันที่ผลิต'].min().strftime('%d/%m/%Y')
         max_date = df['วันที่ผลิต'].max().strftime('%d/%m/%Y')
-        st.markdown(f"**📅 ข้อมูลตั้งแต่วันที่ {min_date} ถึง {max_date} (ตาม Data Base)**")
+        st.markdown(f"**📅 ข้อมูลตั้งแต่วันที่ {min_date} ถึง {max_date}**")
         
         # --- 2. ตั้งค่า O.E.E. และ เวลา Setup ---
         st.sidebar.markdown("---")
@@ -153,7 +180,6 @@ if uploaded_file is not None:
         # --- คำนวณเป้าหมายที่ปรับแล้ว ---
         df['ตัวคูณกะสุทธิ'] = df[['ตัวคูณกะ_Date', 'ตัวคูณกะ_Machine']].min(axis=1)
 
-        # 📌 เพิ่มคอลัมน์แปลงตัวคูณกลับเป็นชื่อกะ เพื่อนำไปแสดงในตาราง
         reverse_shift_mapping = {1.0: "3 กะ", 0.67: "2 กะ", 0.5: "1.5 กะ"}
         df['จำนวนกะ'] = df['ตัวคูณกะสุทธิ'].map(reverse_shift_mapping)
 
@@ -183,7 +209,7 @@ if uploaded_file is not None:
         if selected_parts:
             df = df[df['Part'].isin(selected_parts)]
 
-        # --- 5. แสดงผลตัวชี้วัด (Metrics) แบบดั้งเดิม ---
+        # --- 5. แสดงผลตัวชี้วัด (Metrics) ---
         st.markdown("---")
         total_actual = df['actual_qty'].sum()
         total_target_original = df['เป้าต่อวัน(3กะ)'].sum()
@@ -241,7 +267,6 @@ if uploaded_file is not None:
         # --- 7. ตารางข้อมูลดิบ และปุ่ม Export ---
         st.subheader("📋 รายละเอียดข้อมูลการผลิต (Data Table)")
         
-        # 📌 เพิ่มคอลัมน์ 'จำนวนกะ' เข้าไปใน Data Table
         display_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
         display_df = display_df.sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
         
@@ -268,4 +293,4 @@ if uploaded_file is not None:
         )
 
 else:
-    st.info("👈 กรุณาใช้แถบเมนูด้านซ้ายเพื่ออัปโหลดไฟล์ **data.xlsx** ระบบจะทำการสร้าง Dashboard ให้ทันทีครับ")
+    st.info("👈 กรุณาอัปโหลดไฟล์ **ข้อมูลผลิตรายวัน (Excel)** ที่แถบเมนูด้านซ้ายเพื่อเริ่มต้นดู Dashboard ครับ")
