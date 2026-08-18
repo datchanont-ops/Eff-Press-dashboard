@@ -3,6 +3,7 @@ import streamlit as st
 import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import os
 
 # --- ตั้งค่าหน้าจอ Streamlit ---
 st.set_page_config(page_title="Press Daily Production Dashboard", layout="wide")
@@ -18,7 +19,6 @@ def load_target_data():
         if 'Material' in df_target.columns:
             df_target = df_target.rename(columns={'Material': 'Part', 'cap/day': 'เป้าต่อวัน(3กะ)'})
         else:
-            # กรณีไม่ได้ตั้งชื่อหัวคอลัมน์ จะดึงคอลัมน์ที่ 1 และ 2 มาใช้เลย
             df_target.columns = ['Part', 'เป้าต่อวัน(3กะ)']
             
         df_target.columns = df_target.columns.str.strip()
@@ -32,13 +32,11 @@ def load_daily_data(file, df_target):
     try:
         xls = pd.ExcelFile(file)
         
-        # ถ้าระบบเจอชีตชื่อ pd จะดึงมา ถ้าไม่เจอจะดึง 'ชีตแรกสุด' ของไฟล์แทน (สะดวกมาก)
         if 'pd' in xls.sheet_names:
             df_pd = pd.read_excel(xls, 'pd')
         else:
             df_pd = pd.read_excel(xls, 0)
 
-        # ดึงข้อมูล
         df = df_pd[['Material', 'Document Header Text', 'Qty in Un. of Entry', 'Posting Date', 'Entry Date', 'Time of Entry']].copy()
 
         def extract_machine(text):
@@ -51,7 +49,6 @@ def load_daily_data(file, df_target):
 
         df['Machine'] = df['Document Header Text'].apply(extract_machine)
 
-        # กรองและเปลี่ยนชื่อคอลัมน์
         df_filtered = df.dropna(subset=['Machine']).copy()
         df_filtered = df_filtered.rename(columns={
             'Posting Date': 'วันที่ผลิต',
@@ -59,22 +56,18 @@ def load_daily_data(file, df_target):
             'Qty in Un. of Entry': 'actual_qty'
         })
 
-        # จัดการวันที่
         df_filtered['วันที่ผลิต'] = pd.to_datetime(df_filtered['วันที่ผลิต']).dt.date
         df_filtered['Entry Date'] = pd.to_datetime(df_filtered['Entry Date']).dt.date
 
-        # --- ลอจิกตรวจจับการเปลี่ยน Part (Setup) ---
         df_filtered = df_filtered.sort_values(by=['Machine', 'วันที่ผลิต', 'Entry Date', 'Time of Entry'])
         df_filtered['Part_ก่อนหน้า'] = df_filtered.groupby('Machine')['Part'].shift(1)
         df_filtered['Is_Setup'] = (df_filtered['Part'] != df_filtered['Part_ก่อนหน้า']) & (df_filtered['Part_ก่อนหน้า'].notna())
 
-        # Group By รวมยอด (วัน, เครื่อง, พาร์ท) และนับจำนวนครั้ง Setup
         df_grouped = df_filtered.groupby(['วันที่ผลิต', 'Machine', 'Part'], as_index=False).agg(
             actual_qty=('actual_qty', 'sum'),
             Setup_Count=('Is_Setup', 'sum')
         )
 
-        # นำเป้าการผลิตจากไฟล์หลังบ้านมาเชื่อม
         df_final = pd.merge(df_grouped, df_target, on='Part', how='left')
         df_final['เป้าต่อวัน(3กะ)'] = df_final['เป้าต่อวัน(3กะ)'].fillna(0)
 
@@ -92,11 +85,31 @@ df_target, target_error = load_target_data()
 
 if target_error:
     st.error(target_error)
-    st.stop() # หยุดการทำงานถ้าระบบหาไฟล์เป้าหมายไม่เจอ
+    st.stop()
 
-# 1. แถบเมนูด้านซ้าย: อัปโหลดไฟล์รายวัน
+# ----------------------------------------
+# เมนูด้านซ้าย (Sidebar)
+# ----------------------------------------
+
+# --- ส่วนดาวน์โหลด Template ---
+st.sidebar.header("📥 ดาวน์โหลดแบบฟอร์ม")
+template_file_name = "Template.xlsx"
+
+if os.path.exists(template_file_name):
+    with open(template_file_name, "rb") as file:
+        btn = st.sidebar.download_button(
+            label=f"คลิกดาวน์โหลด {template_file_name}",
+            data=file,
+            file_name=template_file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+else:
+    st.sidebar.warning(f"⚠️ ไม่พบไฟล์ {template_file_name} ในโฟลเดอร์โปรแกรม")
+
+st.sidebar.markdown("---")
+
+# --- ส่วนอัปโหลดไฟล์รายวัน ---
 st.sidebar.header("📂 อัปโหลดยอดผลิตรายวัน")
-st.sidebar.caption("อัปโหลดเฉพาะไฟล์ข้อมูลผลิต (ไม่ต้องมีชีตเป้าหมายแล้ว)")
 uploaded_file = st.sidebar.file_uploader("เลือกไฟล์ Excel", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
@@ -107,12 +120,10 @@ if uploaded_file is not None:
     else:
         st.sidebar.success("✅ โหลดข้อมูลสำเร็จ!")
         
-        # --- แสดงช่วงวันที่ของ Data Base ---
         min_date = df['วันที่ผลิต'].min().strftime('%d/%m/%Y')
         max_date = df['วันที่ผลิต'].max().strftime('%d/%m/%Y')
         st.markdown(f"**📅 ข้อมูลตั้งแต่วันที่ {min_date} ถึง {max_date}**")
         
-        # --- 2. ตั้งค่า O.E.E. และ เวลา Setup ---
         st.sidebar.markdown("---")
         st.sidebar.header("🎯 ตั้งค่าประสิทธิภาพ")
         
@@ -122,7 +133,6 @@ if uploaded_file is not None:
         setup_hours = st.sidebar.number_input("2. เวลา Setup เปลี่ยน Part (ชั่วโมง)", min_value=0.0, max_value=24.0, value=4.0, step=0.5)
         setup_deduct_ratio = setup_hours / 24.0
         
-        # --- 3. จัดการตั้งค่า กะการทำงาน (ผสมกันได้) ---
         st.sidebar.markdown("---")
         st.sidebar.header("⚙️ ตั้งค่ากะการผลิต (แบบผสม)")
         st.sidebar.caption("ระบบจะใช้เป้าที่น้อยที่สุด หากมีการตั้งค่าซ้อนทับกัน")
@@ -133,7 +143,6 @@ if uploaded_file is not None:
             "1.5 กะ (เป้า 50%)": 0.5
         }
 
-        # [ตั้งค่าแบบที่ 1: รายวัน]
         with st.sidebar.expander("📅 1. ตั้งค่ากะรายวัน (By Date)", expanded=False):
             default_shift_date = st.selectbox("กะมาตรฐาน (สำหรับทุกวัน):", list(shift_mapping.keys()), index=0, key='def_date')
             unique_dates = sorted(df['วันที่ผลิต'].unique())
@@ -155,7 +164,6 @@ if uploaded_file is not None:
             
             df['ตัวคูณกะ_Date'] = df['วันที่ผลิต'].map(shift_multiplier_date)
 
-        # [ตั้งค่าแบบที่ 2: รายเครื่องจักร]
         with st.sidebar.expander("🚜 2. ตั้งค่ากะรายเครื่องจักร (By Machine)", expanded=False):
             default_shift_machine = st.selectbox("กะมาตรฐาน (สำหรับทุกเครื่อง):", list(shift_mapping.keys()), index=0, key='def_mac')
             unique_machines = sorted(df['Machine'].unique())
@@ -183,21 +191,16 @@ if uploaded_file is not None:
         reverse_shift_mapping = {1.0: "3 กะ", 0.67: "2 กะ", 0.5: "1.5 กะ"}
         df['จำนวนกะ'] = df['ตัวคูณกะสุทธิ'].map(reverse_shift_mapping)
 
-        # 1. เป้าหมายตั้งต้น * ตัวคูณกะสุทธิ * OEE
         df['เป้าหมายก่อนหักSetup'] = df['เป้าต่อวัน(3กะ)'] * df['ตัวคูณกะสุทธิ'] * oee_multiplier
-        
-        # 2. คำนวณยอดลดเป้าจาก Setup
         df['ยอดลดเป้าSetup'] = (df['เป้าต่อวัน(3กะ)'] * setup_deduct_ratio) * df['Setup_Count']
         
-        # 3. เป้าหมายสุดท้าย
         df['เป้าหมายที่ปรับแล้ว'] = df['เป้าหมายก่อนหักSetup'] - df['ยอดลดเป้าSetup']
         df['เป้าหมายที่ปรับแล้ว'] = df['เป้าหมายที่ปรับแล้ว'].clip(lower=0)
         
-        # คำนวณ % Achieve
         df['% Achieve'] = (df['actual_qty'] / df['เป้าหมายที่ปรับแล้ว']) * 100
         df['% Achieve'] = df['% Achieve'].round(2).fillna(0) 
 
-        # --- 4. ตัวกรองข้อมูล (Filters) ---
+        # --- ตัวกรองข้อมูล (Filters) ---
         st.sidebar.markdown("---")
         st.sidebar.header("🔍 ตัวกรองข้อมูล (Filters)")
         
@@ -209,7 +212,7 @@ if uploaded_file is not None:
         if selected_parts:
             df = df[df['Part'].isin(selected_parts)]
 
-        # --- 5. แสดงผลตัวชี้วัด (Metrics) ---
+        # --- แสดงผลตัวชี้วัด (Metrics) ---
         st.markdown("---")
         total_actual = df['actual_qty'].sum()
         total_target_original = df['เป้าต่อวัน(3กะ)'].sum()
@@ -228,7 +231,7 @@ if uploaded_file is not None:
         with col4:
             st.metric("ประสิทธิภาพรวม (% Achieve)", f"{overall_achieve:.2f}%")
 
-        # --- 6. กราฟ 2 แกน (Plotly Dual-Axis Chart) ---
+        # --- กราฟ 2 แกน (Plotly Dual-Axis Chart) ---
         st.subheader("📊 เปรียบเทียบยอดผลิตจริง กับ เป้าหมาย (พร้อม % Achieve)")
         
         daily_summary = df.groupby('วันที่ผลิต').agg({
@@ -264,7 +267,7 @@ if uploaded_file is not None:
         
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 7. ตารางข้อมูลดิบ และปุ่ม Export ---
+        # --- ตารางข้อมูลดิบ และปุ่ม Export ---
         st.subheader("📋 รายละเอียดข้อมูลการผลิต (Data Table)")
         
         display_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
