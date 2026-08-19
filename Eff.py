@@ -117,7 +117,7 @@ if uploaded_file is not None:
         # ช่วงวันที่ทั้งหมดของฐานข้อมูล
         min_date_db = df['วันที่ผลิต'].min()
         max_date_db = df['วันที่ผลิต'].max()
-        st.markdown(f"**📅 ฐานข้อมูลครอบคลุมตั้งแต่วันที่ {min_date_db.strftime('%d/%m/%Y')} ถึง {max_date_db.strftime('%d/%m/%Y')}**")
+        st.caption(f"📂 ฐานข้อมูลภาพรวมทั้งหมดในไฟล์: {min_date_db.strftime('%d/%m/%Y')} ถึง {max_date_db.strftime('%d/%m/%Y')}")
         
         # --- 2. ตั้งค่า O.E.E. และ เวลา Setup ---
         st.sidebar.markdown("---")
@@ -203,7 +203,7 @@ if uploaded_file is not None:
         st.sidebar.markdown("---")
         st.sidebar.header("🔍 ตัวกรองข้อมูล (Filters)")
         
-        # 📌 ตัวกรองช่วงวันที่ (Date Range Selector)
+        # 📌 4.1 ตัวกรองช่วงวันที่ (Date Range Selector)
         date_range = st.sidebar.date_input(
             "📅 เลือกช่วงวันที่แสดงผล",
             value=(min_date_db, max_date_db),
@@ -211,22 +211,59 @@ if uploaded_file is not None:
             max_value=max_date_db
         )
         
-        # กรองวันที่ตามที่ผู้ใช้เลือก
+        start_disp_date = min_date_db
+        end_disp_date = max_date_db
+        
         if isinstance(date_range, tuple) and len(date_range) == 2:
-            start_date, end_date = date_range
-            df = df[(df['วันที่ผลิต'] >= start_date) & (df['วันที่ผลิต'] <= end_date)]
+            start_disp_date, end_disp_date = date_range
+            df = df[(df['วันที่ผลิต'] >= start_disp_date) & (df['วันที่ผลิต'] <= end_disp_date)]
         elif isinstance(date_range, tuple) and len(date_range) == 1:
-            df = df[df['วันที่ผลิต'] == date_range[0]]
+            start_disp_date = date_range[0]
+            end_disp_date = date_range[0]
+            df = df[df['วันที่ผลิต'] == start_disp_date]
 
-        # ตัวกรองเครื่องจักร
+        # 📌 4.2 ตัวกรองงานทดลองผลิต (Option ตัด Part ที่ผลิต 1-2 วัน)
+        st.sidebar.markdown("🧪 **การกรองงานทดลองผลิต (Trial)**")
+        trial_option = st.sidebar.selectbox(
+            "เลือกเงื่อนไขการตัดงานทดลองผลิต:",
+            [
+                "แสดงทั้งหมด (ไม่ตัด)",
+                "ตัด Part ที่ผลิตเพียง 1 วัน (<= 1 วัน)",
+                "ตัด Part ที่ผลิต 1 - 2 วัน (<= 2 วัน)",
+                "กำหนดจำนวนวันเอง (Custom)"
+            ],
+            index=0
+        )
+
+        part_day_counts = df.groupby('Part')['วันที่ผลิต'].nunique().to_dict()
+        df['จำนวนวันผลิตของPart'] = df['Part'].map(part_day_counts)
+
+        cut_days = 0
+        if trial_option == "ตัด Part ที่ผลิตเพียง 1 วัน (<= 1 วัน)":
+            cut_days = 1
+        elif trial_option == "ตัด Part ที่ผลิต 1 - 2 วัน (<= 2 วัน)":
+            cut_days = 2
+        elif trial_option == "กำหนดจำนวนวันเอง (Custom)":
+            cut_days = st.sidebar.number_input("ตัด Part ที่ผลิตน้อยกว่าหรือเท่ากับ (วัน):", min_value=1, max_value=30, value=2, step=1)
+
+        if cut_days > 0:
+            removed_parts = df[df['จำนวนวันผลิตของPart'] <= cut_days]['Part'].unique()
+            df = df[df['จำนวนวันผลิตของPart'] > cut_days]
+            st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= {cut_days} วัน):** ตัดออกทั้งหมด `{len(removed_parts)}` Part ({', '.join(removed_parts[:5])}{'...' if len(removed_parts)>5 else ''})")
+
+        # 📌 4.3 ตัวกรองเครื่องจักร
         selected_machines = st.sidebar.multiselect("เลือกเครื่องจักร (Machine)", options=sorted(df['Machine'].unique()), default=[])
         if selected_machines:
             df = df[df['Machine'].isin(selected_machines)]
             
-        # ตัวกรอง Part
+        # 📌 4.4 ตัวกรอง Part
         selected_parts = st.sidebar.multiselect("เลือกชิ้นงาน (Part)", options=sorted(df['Part'].unique()), default=[])
         if selected_parts:
             df = df[df['Part'].isin(selected_parts)]
+
+        # --- 📌 แสดงแถบสถานะช่วงวันที่ที่เลือกแสดงผลใน Dashboard ---
+        days_count = (end_disp_date - start_disp_date).days + 1
+        st.success(f"📅 **ช่วงวันที่เลือกแสดงผล:** {start_disp_date.strftime('%d/%m/%Y')} ถึง {end_disp_date.strftime('%d/%m/%Y')} (รวม {days_count:,} วัน)")
 
         # --- 5. แสดงผลตัวชี้วัด (Metrics) ---
         st.markdown("---")
