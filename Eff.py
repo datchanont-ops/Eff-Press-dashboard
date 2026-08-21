@@ -1,187 +1,369 @@
-import streamlit as st
 import pandas as pd
-import plotly.express as px
+import streamlit as st
+import datetime
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import os
 
-st.set_page_config(page_title="Production Dashboard", layout="wide")
-st.title("📊 Dashboard ประสิทธิภาพการผลิตเทียบเป้าหมาย")
+# --- ตั้งค่าหน้าจอ Streamlit ---
+st.set_page_config(page_title="Press Daily Production Dashboard", layout="wide")
 
-# Sidebar
-st.sidebar.header("📁 1. อัปโหลดไฟล์ข้อมูล")
-uploaded_file = st.sidebar.file_uploader("อัปโหลดไฟล์ data.xlsx ที่อัปเดตทุกวัน", type=["xlsx", "xls", "csv"])
-
-# ระบบค้นหาไฟล์เป้าหมายอ้างอิงเบื้องหลัง (ไม่ต้องอัปโหลด)
-target_file_name = None
-for f in os.listdir():
-    if "เทียบผลิตจริง" in f and ".xlsx" in f:
-        target_file_name = f
-        break
-
-if target_file_name:
-    st.sidebar.success(f"✅ พบไฟล์เป้าหมายอัตโนมัติ: {target_file_name}")
-else:
-    st.sidebar.error("❌ ไม่พบไฟล์ 'เทียบผลิตจริง JULY26 .xlsx' ในโฟลเดอร์เดียวกัน กรุณาตรวจสอบ")
-
-# ฟังก์ชันดึงชื่อเครื่องจักร (แยกคนละเครื่อง)
-def extract_machine(doc_text, cost_center):
-    text = str(doc_text).strip()
-    if "/" in text:
-        parts = text.split("/")
-        if len(parts) > 1 and parts[1].strip() != "":
-            return parts[1].strip()
-            
-    cc = str(cost_center).strip()
-    if cc and cc.lower() != 'nan':
-        return cc
-    return "Unknown_MC"
-
-if uploaded_file:
+# --- 1. ฟังก์ชันโหลดไฟล์เป้าหมาย (หลังบ้าน) ---
+@st.cache_data
+def load_target_data():
     try:
-        # อ่านไฟล์ data.xlsx
-        if uploaded_file.name.endswith(".csv"):
-            df_pd = pd.read_csv(uploaded_file)
+        df_target = pd.read_excel('target.xlsx')
+        if 'Material' in df_target.columns:
+            df_target = df_target.rename(columns={'Material': 'Part', 'cap/day': 'เป้าต่อวัน(3กะ)'})
         else:
-            df_pd = pd.read_excel(uploaded_file, sheet_name='pd')
+            df_target.columns = ['Part', 'เป้าต่อวัน(3กะ)']
             
-        df_pd.columns = [str(c).strip() for c in df_pd.columns]
-
-        # เช็คคอลัมน์ที่จำเป็น (A, G, K)
-        required_cols = ['Material', 'Qty in Un. of Entry', 'Posting Date']
-        missing = [c for c in required_cols if c not in df_pd.columns]
-        if missing:
-            st.error(f"❌ โครงสร้างไฟล์ผิด ไม่พบคอลัมน์: {', '.join(missing)}")
-            st.stop()
-
-        # ==========================================
-        # 📌 1. ทำความสะอาดและดึงข้อมูลตามเงื่อนไข
-        # ==========================================
-        
-        # 1.1 Qty in Un. of Entry (G) -> Actual Qty
-        df_pd['Actual_Qty'] = pd.to_numeric(df_pd['Qty in Un. of Entry'], errors='coerce').fillna(0)
-        
-        # 1.2 Posting Date (K) -> Date
-        df_pd['Posting Date'] = pd.to_datetime(df_pd['Posting Date'], errors='coerce').dt.date
-        df_pd = df_pd.dropna(subset=['Posting Date']) # ตัดบรรทัดที่ไม่มีวันที่ทิ้ง
-        
-        # 1.3 Material (A) -> Part
-        df_pd['Material'] = df_pd['Material'].astype(str).str.strip()
-        
-        # แกะชื่อเครื่องจักร (ใช้สำหรับแยกคนละเครื่อง)
-        df_pd['mc'] = df_pd.apply(
-            lambda r: extract_machine(r.get('Document Header Text', ''), r.get('Cost Center', '')), axis=1
-        )
-
-        # ==========================================
-        # 📌 2. จับกลุ่มรวมยอด (วันเดียวกันรวมกัน, คนละเครื่องแยกกัน)
-        # ==========================================
-        # Group by [วันที่, เครื่องจักร, Part] แล้ว Sum ยอด G
-        df_actual = df_pd.groupby(['Posting Date', 'mc', 'Material'], as_index=False)['Actual_Qty'].sum()
-
-        # ==========================================
-        # 📌 3. ดึงเป้าหมายจาก "เทียบผลิตจริง JULY26 .xlsx"
-        # ==========================================
-        df_target = pd.DataFrame(columns=['Material', 'cap_per_day'])
-        if target_file_name:
-            try:
-                df_cap = pd.read_excel(target_file_name, sheet_name='rou capday')
-                df_cap.columns = [str(c).strip() for c in df_cap.columns]
-                
-                cap_col = [c for c in df_cap.columns if 'cap' in c.lower() or 'target' in c.lower()]
-                if cap_col:
-                    df_target = df_cap[['Material', cap_col[0]]].rename(columns={cap_col[0]: 'cap_per_day'})
-                    df_target['Material'] = df_target['Material'].astype(str).str.strip()
-                    df_target['cap_per_day'] = pd.to_numeric(df_target['cap_per_day'], errors='coerce').fillna(0)
-                    df_target = df_target.drop_duplicates(subset=['Material'])
-            except Exception as e:
-                st.error(f"อ่านชีต 'rou capday' ไม่สำเร็จ: {e}")
-
-        # นำยอด Actual ไปชนกับ Target ตาม Material
-        df_merged = pd.merge(df_actual, df_target, on='Material', how='left')
-        
-        # ถ้าระบบหา Target ไม่เจอ "จะปรับให้เป้าเป็น 0" (ไม่แอบใช้ยอด Actual เป็น Target เหมือนเดิมแล้ว เพื่อให้ข้อมูลตรงความจริง)
-        df_merged['cap_per_day'] = df_merged['cap_per_day'].fillna(0)
-
-        # ==========================================
-        # 📌 4. คำนวณประสิทธิภาพ
-        # ==========================================
-        df_merged['Efficiency (%)'] = df_merged.apply(
-            lambda r: (r['Actual_Qty'] / r['cap_per_day'] * 100) if r['cap_per_day'] > 0 else 0, axis=1
-        )
-
-        # ---------------------------------------------------------
-        # 📊 ส่วนแสดงผล Dashboard (เป้าหมาย 3 ข้อ)
-        # ---------------------------------------------------------
-        
-        # 🎯 3.1 ประสิทธิภาพโดยรวม
-        st.subheader("1. ประสิทธิภาพการผลิตโดยรวม (Overall Efficiency)")
-        total_act = df_merged['Actual_Qty'].sum()
-        total_tgt = df_merged['cap_per_day'].sum()
-        overall_eff = (total_act / total_tgt * 100) if total_tgt > 0 else 0
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("ยอดผลิตจริง (ชิ้น)", f"{total_act:,.0f}")
-        col2.metric("เป้าหมายรวม (ชิ้น)", f"{total_tgt:,.0f}")
-        col3.metric("ประสิทธิภาพโดยรวม", f"{overall_eff:.2f}%")
-
-        st.divider()
-        col_left, col_right = st.columns(2)
-
-        # 🎯 3.2 ประสิทธิภาพแต่ละเครื่อง (คนละเครื่องแยกแท่งกันชัดเจน)
-        with col_left:
-            st.subheader("⚙️ 2. ประสิทธิภาพแยกตามแต่ละเครื่อง")
-            df_mc = df_merged.groupby('mc')[['Actual_Qty', 'cap_per_day']].sum().reset_index()
-            df_mc['Efficiency (%)'] = df_mc.apply(
-                lambda r: (r['Actual_Qty'] / r['cap_per_day'] * 100) if r['cap_per_day'] > 0 else 0, axis=1
-            )
-            
-            fig_mc = px.bar(
-                df_mc, x='mc', y='Efficiency (%)',
-                text=df_mc['Efficiency (%)'].apply(lambda x: f"{x:.1f}%"),
-                color='Efficiency (%)',
-                color_continuous_scale=['#FF4B4B', '#FFE800', '#00CC96'],
-                labels={'mc': 'เครื่องจักร'}
-            )
-            fig_mc.update_traces(textposition='outside')
-            fig_mc.update_layout(yaxis_range=[0, max(df_mc['Efficiency (%)'].max() * 1.2, 110)])
-            st.plotly_chart(fig_mc, use_container_width=True)
-
-        # 🎯 3.3 ประสิทธิภาพแต่ละวัน (วันเดียวกันรวมเป็น 1 จุด)
-        with col_right:
-            st.subheader("📅 3. ประสิทธิภาพแยกตามแต่ละวัน")
-            df_day = df_merged.groupby('Posting Date')[['Actual_Qty', 'cap_per_day']].sum().reset_index()
-            df_day['Efficiency (%)'] = df_day.apply(
-                lambda r: (r['Actual_Qty'] / r['cap_per_day'] * 100) if r['cap_per_day'] > 0 else 0, axis=1
-            )
-            df_day['Posting Date'] = df_day['Posting Date'].astype(str)
-
-            fig_day = px.line(
-                df_day, x='Posting Date', y='Efficiency (%)', markers=True,
-                text=df_day['Efficiency (%)'].apply(lambda x: f"{x:.1f}%")
-            )
-            fig_day.update_traces(textposition="top center")
-            fig_day.add_hline(y=100, line_dash="dash", line_color="green", annotation_text="Target 100%")
-            st.plotly_chart(fig_day, use_container_width=True)
-
-        # เช็คข้อมูลดิบแบบละเอียด
-        st.subheader("📋 ตารางข้อมูลสรุป (ตรวจสอบการดึงคอลัมน์ A, G, K)")
-        st.dataframe(
-            df_merged[['Posting Date', 'mc', 'Material', 'Actual_Qty', 'cap_per_day', 'Efficiency (%)']]
-            .rename(columns={
-                'Posting Date': 'วันที่ (K)',
-                'Material': 'Part (A)',
-                'Actual_Qty': 'ผลิตจริง (G)',
-                'cap_per_day': 'เป้าหมาย/วัน'
-            })
-            .sort_values(by=['วันที่ (K)', 'mc', 'Part (A)'])
-            .style.format({'ผลิตจริง (G)': '{:,.0f}', 'เป้าหมาย/วัน': '{:,.0f}', 'Efficiency (%)': '{:.2f}%'}),
-            use_container_width=True
-        )
-
-        # แสดงรายการ Part ที่ดึง Target ไม่เจอ (เพื่อเช็คหาข้อผิดพลาด)
-        missing_parts = df_merged[df_merged['เป้าหมาย/วัน'] == 0]['Part (A)'].unique()
-        if len(missing_parts) > 0:
-            with st.expander("⚠️ พบรายการ Part ที่ไม่พบข้อมูลเป้าหมายในชีต 'rou capday'"):
-                st.write(missing_parts)
-
+        df_target.columns = df_target.columns.str.strip()
+        return df_target, None
     except Exception as e:
-        st.error(f"❌ เกิดข้อผิดพลาด: {e}")
+        return None, "❌ **ไม่พบไฟล์เป้าหมาย:** กรุณาสร้างไฟล์เป้าหมายการผลิต ตั้งชื่อว่า `target.xlsx` แล้วนำมาวางไว้ในโฟลเดอร์เดียวกับโปรแกรมครับ"
+
+# --- 2. ฟังก์ชันโหลดไฟล์ผลิตรายวัน (จากการอัปโหลด หรือไฟล์ล็อกในระบบ) ---
+@st.cache_data
+def load_daily_data(file, df_target):
+    try:
+        xls = pd.ExcelFile(file)
+        
+        if 'pd' in xls.sheet_names:
+            df_pd = pd.read_excel(xls, 'pd')
+        else:
+            df_pd = pd.read_excel(xls, 0)
+
+        df = df_pd[['Material', 'Document Header Text', 'Qty in Un. of Entry', 'Posting Date', 'Entry Date', 'Time of Entry']].copy()
+
+        def extract_machine(text):
+            if pd.isna(text):
+                return None
+            parts = str(text).split('/')
+            if len(parts) >= 2 and str(text).startswith('1/'):
+                return parts[1]
+            return None
+
+        df['Machine'] = df['Document Header Text'].apply(extract_machine)
+
+        df_filtered = df.dropna(subset=['Machine']).copy()
+        df_filtered = df_filtered.rename(columns={
+            'Posting Date': 'วันที่ผลิต',
+            'Material': 'Part',
+            'Qty in Un. of Entry': 'actual_qty'
+        })
+
+        df_filtered['วันที่ผลิต'] = pd.to_datetime(df_filtered['วันที่ผลิต']).dt.date
+        df_filtered['Entry Date'] = pd.to_datetime(df_filtered['Entry Date']).dt.date
+
+        # --- ตรวจจับการเปลี่ยน Part (Setup) ---
+        df_filtered = df_filtered.sort_values(by=['Machine', 'วันที่ผลิต', 'Entry Date', 'Time of Entry'])
+        df_filtered['Part_ก่อนหน้า'] = df_filtered.groupby('Machine')['Part'].shift(1)
+        df_filtered['Is_Setup'] = (df_filtered['Part'] != df_filtered['Part_ก่อนหน้า']) & (df_filtered['Part_ก่อนหน้า'].notna())
+
+        df_grouped = df_filtered.groupby(['วันที่ผลิต', 'Machine', 'Part'], as_index=False).agg(
+            actual_qty=('actual_qty', 'sum'),
+            Setup_Count=('Is_Setup', 'sum')
+        )
+
+        df_final = pd.merge(df_grouped, df_target, on='Part', how='left')
+        df_final['เป้าต่อวัน(3กะ)'] = df_final['เป้าต่อวัน(3กะ)'].fillna(0)
+
+        return df_final, None
+    except Exception as e:
+        return None, f"เกิดข้อผิดพลาดในการอ่านไฟล์รายวัน: {e}"
+
+# ==========================================
+# --- UI หลักของ Dashboard ---
+# ==========================================
+st.title("🏭 Press Daily Production Dashboard")
+
+# โหลดข้อมูลเป้าหมายจากหลังบ้าน
+df_target, target_error = load_target_data()
+
+if target_error:
+    st.error(target_error)
+    st.stop()
+
+# --- ส่วนดาวน์โหลด Template ---
+st.sidebar.header("📥 ดาวน์โหลดแบบฟอร์ม")
+template_file_name = "Template.xlsx"
+
+if os.path.exists(template_file_name):
+    with open(template_file_name, "rb") as file:
+        st.sidebar.download_button(
+            label=f"คลิกดาวน์โหลด {template_file_name}",
+            data=file,
+            file_name=template_file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+else:
+    st.sidebar.warning(f"⚠️ ไม่พบไฟล์ {template_file_name} ในโฟลเดอร์โปรแกรม")
+
+st.sidebar.markdown("---")
+
+# --- ส่วนอัปโหลดไฟล์รายวัน (ระบบ Fallback สำหรับโหมดนำเสนอ) ---
+st.sidebar.header("📂 อัปโหลดยอดผลิตรายวัน")
+st.sidebar.caption("หากไม่อัปโหลด ระบบจะใช้ไฟล์ data.xlsx ล่าสุดที่ล็อกไว้")
+uploaded_file = st.sidebar.file_uploader("เลือกไฟล์ Excel", type=["xlsx", "xls"])
+
+data_source = None
+if uploaded_file is not None:
+    data_source = uploaded_file
+    st.sidebar.success("✅ โหลดข้อมูลจากไฟล์อัปโหลดสำเร็จ!")
+elif os.path.exists("data.xlsx"):
+    data_source = "data.xlsx"
+    st.sidebar.info("📌 กำลังแสดงข้อมูลที่ล็อกไว้ในระบบ (data.xlsx)")
+
+if data_source is not None:
+    df, error = load_daily_data(data_source, df_target)
+    
+    if error:
+        st.error(error)
+    else:
+        # ช่วงวันที่ทั้งหมดของฐานข้อมูล
+        min_date_db = df['วันที่ผลิต'].min()
+        max_date_db = df['วันที่ผลิต'].max()
+        st.caption(f"📂 ฐานข้อมูลภาพรวมทั้งหมดในไฟล์: {min_date_db.strftime('%d/%m/%Y')} ถึง {max_date_db.strftime('%d/%m/%Y')}")
+        
+        # --- 2. ตั้งค่า O.E.E. และ เวลา Setup ---
+        st.sidebar.markdown("---")
+        st.sidebar.header("🎯 ตั้งค่าประสิทธิภาพ")
+        
+        oee_val = st.sidebar.number_input("1. ค่า O.E.E. (1-100%)", min_value=1, max_value=100, value=100, step=1)
+        oee_multiplier = oee_val / 100.0
+        
+        setup_hours = st.sidebar.number_input("2. เวลา Setup เปลี่ยน Part (ชั่วโมง)", min_value=0.0, max_value=24.0, value=4.0, step=0.5)
+        setup_deduct_ratio = setup_hours / 24.0
+        
+        # --- 3. จัดการตั้งค่า กะการทำงาน ---
+        st.sidebar.markdown("---")
+        st.sidebar.header("⚙️ ตั้งค่ากะการผลิต (แบบผสม)")
+        st.sidebar.caption("ระบบจะใช้เป้าที่น้อยที่สุด หากมีการตั้งค่าซ้อนทับกัน")
+
+        shift_mapping = {
+            "3 กะ (เป้า 100%)": 1.0,
+            "2 กะ (เป้า 67%)": 0.67,
+            "1.5 กะ (เป้า 50%)": 0.5
+        }
+
+        # 3.1 รายวัน
+        with st.sidebar.expander("📅 1. ตั้งค่ากะรายวัน (By Date)", expanded=False):
+            default_shift_date = st.selectbox("กะมาตรฐาน (สำหรับทุกวัน):", list(shift_mapping.keys()), index=0, key='def_date')
+            unique_dates = sorted(df['วันที่ผลิต'].unique())
+            shift_date_df = pd.DataFrame({'วันที่': unique_dates, 'กะการทำงาน': [default_shift_date] * len(unique_dates)})
+
+            st.write("แก้ไขกะเฉพาะบางวัน:")
+            edited_shift_date_df = st.data_editor(
+                shift_date_df,
+                column_config={
+                    "วันที่": st.column_config.DateColumn("วันที่", disabled=True, format="DD/MM/YYYY"),
+                    "กะการทำงาน": st.column_config.SelectboxColumn("กะการทำงาน", options=list(shift_mapping.keys()), required=True)
+                },
+                hide_index=True, use_container_width=True, key='edit_date'
+            )
+
+            shift_multiplier_date = {}
+            for index, row in edited_shift_date_df.iterrows():
+                shift_multiplier_date[row['วันที่']] = shift_mapping[row['กะการทำงาน']]
+            
+            df['ตัวคูณกะ_Date'] = df['วันที่ผลิต'].map(shift_multiplier_date)
+
+        # 3.2 รายเครื่องจักร
+        with st.sidebar.expander("🚜 2. ตั้งค่ากะรายเครื่องจักร (By Machine)", expanded=False):
+            default_shift_machine = st.selectbox("กะมาตรฐาน (สำหรับทุกเครื่อง):", list(shift_mapping.keys()), index=0, key='def_mac')
+            unique_machines = sorted(df['Machine'].unique())
+            shift_machine_df = pd.DataFrame({'Machine': unique_machines, 'กะการทำงาน': [default_shift_machine] * len(unique_machines)})
+
+            st.write("แก้ไขกะเฉพาะบางเครื่อง:")
+            edited_shift_machine_df = st.data_editor(
+                shift_machine_df,
+                column_config={
+                    "Machine": st.column_config.TextColumn("ชื่อเครื่องจักร", disabled=True),
+                    "กะการทำงาน": st.column_config.SelectboxColumn("กะการทำงาน", options=list(shift_mapping.keys()), required=True)
+                },
+                hide_index=True, use_container_width=True, key='edit_mac'
+            )
+
+            shift_multiplier_machine = {}
+            for index, row in edited_shift_machine_df.iterrows():
+                shift_multiplier_machine[row['Machine']] = shift_mapping[row['กะการทำงาน']]
+            
+            df['ตัวคูณกะ_Machine'] = df['Machine'].map(shift_multiplier_machine)
+
+        # --- คำนวณเป้าหมายที่ปรับแล้ว ---
+        df['ตัวคูณกะสุทธิ'] = df[['ตัวคูณกะ_Date', 'ตัวคูณกะ_Machine']].min(axis=1)
+
+        reverse_shift_mapping = {1.0: "3 กะ", 0.67: "2 กะ", 0.5: "1.5 กะ"}
+        df['จำนวนกะ'] = df['ตัวคูณกะสุทธิ'].map(reverse_shift_mapping)
+
+        df['เป้าหมายก่อนหักSetup'] = df['เป้าต่อวัน(3กะ)'] * df['ตัวคูณกะสุทธิ'] * oee_multiplier
+        df['ยอดลดเป้าSetup'] = (df['เป้าต่อวัน(3กะ)'] * setup_deduct_ratio) * df['Setup_Count']
+        
+        df['เป้าหมายที่ปรับแล้ว'] = df['เป้าหมายก่อนหักSetup'] - df['ยอดลดเป้าSetup']
+        df['เป้าหมายที่ปรับแล้ว'] = df['เป้าหมายที่ปรับแล้ว'].clip(lower=0)
+        
+        df['% Achieve'] = (df['actual_qty'] / df['เป้าหมายที่ปรับแล้ว']) * 100
+        df['% Achieve'] = df['% Achieve'].round(2).fillna(0) 
+
+        # --- 4. ตัวกรองข้อมูล (Filters) ---
+        st.sidebar.markdown("---")
+        st.sidebar.header("🔍 ตัวกรองข้อมูล (Filters)")
+        
+        # 📌 4.1 ตัวกรองช่วงวันที่ (Date Range Selector)
+        date_range = st.sidebar.date_input(
+            "📅 เลือกช่วงวันที่แสดงผล",
+            value=(min_date_db, max_date_db),
+            min_value=min_date_db,
+            max_value=max_date_db
+        )
+        
+        start_disp_date = min_date_db
+        end_disp_date = max_date_db
+        
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_disp_date, end_disp_date = date_range
+            df = df[(df['วันที่ผลิต'] >= start_disp_date) & (df['วันที่ผลิต'] <= end_disp_date)]
+        elif isinstance(date_range, tuple) and len(date_range) == 1:
+            start_disp_date = date_range[0]
+            end_disp_date = date_range[0]
+            df = df[df['วันที่ผลิต'] == start_disp_date]
+
+        # 📌 4.2 ตัวกรองงานทดลองผลิต (Option ตัด Part ที่ผลิต 1-2 วัน)
+        st.sidebar.markdown("🧪 **การกรองงานทดลองผลิต (Trial)**")
+        trial_option = st.sidebar.selectbox(
+            "เลือกเงื่อนไขการตัดงานทดลองผลิต:",
+            [
+                "แสดงทั้งหมด (ไม่ตัด)",
+                "ตัด Part ที่ผลิตเพียง 1 วัน (<= 1 วัน)",
+                "ตัด Part ที่ผลิต 1 - 2 วัน (<= 2 วัน)",
+                "กำหนดจำนวนวันเอง (Custom)"
+            ],
+            index=0
+        )
+
+        part_day_counts = df.groupby('Part')['วันที่ผลิต'].nunique().to_dict()
+        df['จำนวนวันผลิตของPart'] = df['Part'].map(part_day_counts)
+
+        cut_days = 0
+        if trial_option == "ตัด Part ที่ผลิตเพียง 1 วัน (<= 1 วัน)":
+            cut_days = 1
+        elif trial_option == "ตัด Part ที่ผลิต 1 - 2 วัน (<= 2 วัน)":
+            cut_days = 2
+        elif trial_option == "กำหนดจำนวนวันเอง (Custom)":
+            cut_days = st.sidebar.number_input("ตัด Part ที่ผลิตน้อยกว่าหรือเท่ากับ (วัน):", min_value=1, max_value=30, value=2, step=1)
+
+        if cut_days > 0:
+            removed_parts = df[df['จำนวนวันผลิตของPart'] <= cut_days]['Part'].unique()
+            df = df[df['จำนวนวันผลิตของPart'] > cut_days]
+            st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= {cut_days} วัน):** ตัดออกทั้งหมด `{len(removed_parts)}` Part ({', '.join(removed_parts[:5])}{'...' if len(removed_parts)>5 else ''})")
+
+        # 📌 4.3 ตัวกรองกลุ่มเครื่องจักร (Machine Group)
+        st.sidebar.markdown("⚙️ **ตัวกรองเครื่องจักร**")
+        machine_groups = ['INJ', 'INM', '510', 'VAC', '400T', '300T', '350T']
+        selected_groups = st.sidebar.multiselect("1. เลือกกลุ่มเครื่องจักร (Machine Group)", options=machine_groups, default=[])
+        
+        if selected_groups:
+            pattern = '|'.join(selected_groups)
+            df = df[df['Machine'].str.contains(pattern, case=False, na=False)]
+
+        # 📌 4.4 ตัวกรองเครื่องจักร (รายเครื่อง)
+        available_machines = sorted(df['Machine'].unique())
+        selected_machines = st.sidebar.multiselect("2. เลือกเครื่องจักร (ระบุรายเครื่อง)", options=available_machines, default=[])
+        if selected_machines:
+            df = df[df['Machine'].isin(selected_machines)]
+            
+        # 📌 4.5 ตัวกรอง Part
+        selected_parts = st.sidebar.multiselect("เลือกชิ้นงาน (Part)", options=sorted(df['Part'].unique()), default=[])
+        if selected_parts:
+            df = df[df['Part'].isin(selected_parts)]
+
+        # --- 📌 แสดงแถบสถานะช่วงวันที่ที่เลือกแสดงผลใน Dashboard ---
+        days_count = (end_disp_date - start_disp_date).days + 1
+        st.success(f"📅 **ช่วงวันที่เลือกแสดงผล:** {start_disp_date.strftime('%d/%m/%Y')} ถึง {end_disp_date.strftime('%d/%m/%Y')} (รวม {days_count:,} วัน)")
+
+        # --- 5. แสดงผลตัวชี้วัด (Metrics) ---
+        st.markdown("---")
+        total_actual = df['actual_qty'].sum()
+        total_target_original = df['เป้าต่อวัน(3กะ)'].sum()
+        total_target = df['เป้าหมายที่ปรับแล้ว'].sum()
+        
+        overall_achieve = (total_actual / total_target * 100) if total_target > 0 else 0
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("ยอดผลิตจริง (Actual)", f"{total_actual:,.0f} Pcs")
+        with col2:
+            st.metric("เป้า 100% (Original Target)", f"{total_target_original:,.0f} Pcs")
+        with col3:
+            st.metric("เป้าหลังหัก กะ/OEE/Setup", f"{total_target:,.0f} Pcs")
+        with col4:
+            st.metric("ประสิทธิภาพรวม (% Achieve)", f"{overall_achieve:.2f}%")
+
+        # --- 6. กราฟ 2 แกน (Plotly Dual-Axis Chart) ---
+        st.subheader("📊 เปรียบเทียบยอดผลิตจริง กับ เป้าหมาย (พร้อม % Achieve)")
+        
+        daily_summary = df.groupby('วันที่ผลิต').agg({
+            'actual_qty': 'sum',
+            'เป้าหมายที่ปรับแล้ว': 'sum'
+        }).reset_index()
+        
+        daily_summary['% Achieve'] = (daily_summary['actual_qty'] / daily_summary['เป้าหมายที่ปรับแล้ว'] * 100).fillna(0).round(2)
+        
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        fig.add_trace(
+            go.Bar(x=daily_summary['วันที่ผลิต'], y=daily_summary['actual_qty'], name="ยอดผลิตจริง (Actual)", marker_color='#1f77b4'),
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Bar(x=daily_summary['วันที่ผลิต'], y=daily_summary['เป้าหมายที่ปรับแล้ว'], name="เป้าหมาย (Target)", marker_color='#ff7f0e'),
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Scatter(x=daily_summary['วันที่ผลิต'], y=daily_summary['% Achieve'], name="% Achieve", mode='lines+markers', line=dict(color='red', width=3), marker=dict(size=8)),
+            secondary_y=True,
+        )
+        
+        fig.update_layout(
+            barmode='group',
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=0, r=0, t=30, b=0)
+        )
+        fig.update_yaxes(title_text="จำนวนชิ้นงาน (Pcs)", secondary_y=False)
+        fig.update_yaxes(title_text="ประสิทธิภาพ (% Achieve)", secondary_y=True, ticksuffix="%")
+        
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- 7. ตารางข้อมูลดิบ และปุ่ม Export ---
+        st.subheader("📋 รายละเอียดข้อมูลการผลิต (Data Table)")
+        
+        display_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
+        display_df = display_df.sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
+        
+        st.dataframe(
+            display_df, 
+            use_container_width=True,
+            column_config={
+                "actual_qty": st.column_config.NumberColumn("ยอดผลิตจริง"),
+                "เป้าต่อวัน(3กะ)": st.column_config.NumberColumn("เป้า 3 กะ"),
+                "จำนวนกะ": st.column_config.TextColumn("จำนวนกะ"),
+                "ตัวคูณกะสุทธิ": st.column_config.NumberColumn("อัตราส่วนกะสุทธิ"),
+                "Setup_Count": st.column_config.NumberColumn("จำนวนครั้งเปลี่ยน Part"),
+                "เป้าหมายที่ปรับแล้ว": st.column_config.NumberColumn("เป้าสุทธิ"),
+                "% Achieve": st.column_config.ProgressColumn("% เทียบเป้า", format="%.2f%%", min_value=0, max_value=150)
+            }
+        )
+        
+        csv_data = display_df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 ดาวน์โหลดข้อมูล (Export to CSV)",
+            data=csv_data,
+            file_name=f"Production_Data_Export.csv",
+            mime="text/csv"
+        )
+
+else:
+    st.info("👈 กรุณาอัปโหลดไฟล์ หรือ นำไฟล์ data.xlsx ไปวางไว้ในโฟลเดอร์โปรแกรมเพื่อล็อกข้อมูลเริ่มต้นครับ")
