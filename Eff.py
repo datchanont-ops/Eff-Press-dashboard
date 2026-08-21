@@ -45,6 +45,21 @@ def load_daily_data(file, df_target):
             return None
 
         df['Machine'] = df['Document Header Text'].apply(extract_machine)
+        
+        # 📌 ฟังก์ชันสำหรับจัดกลุ่มเครื่องจักร (Machine Group) อัตโนมัติ
+        def assign_machine_group(mc):
+            if pd.isna(mc): return 'OTHER'
+            mc_str = str(mc).upper()
+            if 'INM' in mc_str: return 'INM'
+            elif 'INJ' in mc_str: return 'INJ'
+            elif 'VAC' in mc_str: return 'VAC'
+            elif '400T' in mc_str: return '400T'
+            elif '300T' in mc_str: return '300T'
+            elif '510' in mc_str: return '510'
+            elif 'PRESS' in mc_str: return 'PRESS'
+            else: return 'OTHER'
+
+        df['Machine Group'] = df['Machine'].apply(assign_machine_group)
 
         df_filtered = df.dropna(subset=['Machine']).copy()
         df_filtered = df_filtered.rename(columns={
@@ -61,7 +76,8 @@ def load_daily_data(file, df_target):
         df_filtered['Part_ก่อนหน้า'] = df_filtered.groupby('Machine')['Part'].shift(1)
         df_filtered['Is_Setup'] = (df_filtered['Part'] != df_filtered['Part_ก่อนหน้า']) & (df_filtered['Part_ก่อนหน้า'].notna())
 
-        df_grouped = df_filtered.groupby(['วันที่ผลิต', 'Machine', 'Part'], as_index=False).agg(
+        # Group By รวมยอด (พ่วง Machine Group เข้าไปด้วย)
+        df_grouped = df_filtered.groupby(['วันที่ผลิต', 'Machine Group', 'Machine', 'Part'], as_index=False).agg(
             actual_qty=('actual_qty', 'sum'),
             Setup_Count=('Is_Setup', 'sum')
         )
@@ -102,22 +118,29 @@ else:
 
 st.sidebar.markdown("---")
 
-# --- ส่วนอัปโหลดไฟล์รายวัน ---
+# --- ส่วนอัปโหลดไฟล์รายวัน (สลับระหว่างไฟล์แนบ vs ไฟล์ในระบบ) ---
 st.sidebar.header("📂 อัปโหลดยอดผลิตรายวัน")
+st.sidebar.caption("หากไม่อัปโหลด ระบบจะใช้ไฟล์ data.xlsx ล่าสุดที่ล็อกไว้ในระบบ")
 uploaded_file = st.sidebar.file_uploader("เลือกไฟล์ Excel", type=["xlsx", "xls"])
 
+data_source = None
 if uploaded_file is not None:
-    df, error = load_daily_data(uploaded_file, df_target)
+    data_source = uploaded_file
+    st.sidebar.success("✅ โหลดข้อมูลจากไฟล์อัปโหลดสำเร็จ!")
+elif os.path.exists("data.xlsx"):
+    data_source = "data.xlsx"
+    st.sidebar.info("📌 กำลังแสดงข้อมูลที่ล็อกไว้ในระบบ (data.xlsx)")
+
+if data_source is not None:
+    df, error = load_daily_data(data_source, df_target)
     
     if error:
         st.error(error)
     else:
-        st.sidebar.success("✅ โหลดข้อมูลสำเร็จ!")
-        
         # ช่วงวันที่ทั้งหมดของฐานข้อมูล
         min_date_db = df['วันที่ผลิต'].min()
         max_date_db = df['วันที่ผลิต'].max()
-        st.caption(f"📂 ฐานข้อมูลภาพรวมทั้งหมดในไฟล์: {min_date_db.strftime('%d/%m/%Y')} ถึง {max_date_db.strftime('%d/%m/%Y')}")
+        st.caption(f"📂 ฐานข้อมูลภาพรวมทั้งหมด: {min_date_db.strftime('%d/%m/%Y')} ถึง {max_date_db.strftime('%d/%m/%Y')}")
         
         # --- 2. ตั้งค่า O.E.E. และ เวลา Setup ---
         st.sidebar.markdown("---")
@@ -140,7 +163,6 @@ if uploaded_file is not None:
             "1.5 กะ (เป้า 50%)": 0.5
         }
 
-        # 3.1 รายวัน
         with st.sidebar.expander("📅 1. ตั้งค่ากะรายวัน (By Date)", expanded=False):
             default_shift_date = st.selectbox("กะมาตรฐาน (สำหรับทุกวัน):", list(shift_mapping.keys()), index=0, key='def_date')
             unique_dates = sorted(df['วันที่ผลิต'].unique())
@@ -162,7 +184,6 @@ if uploaded_file is not None:
             
             df['ตัวคูณกะ_Date'] = df['วันที่ผลิต'].map(shift_multiplier_date)
 
-        # 3.2 รายเครื่องจักร
         with st.sidebar.expander("🚜 2. ตั้งค่ากะรายเครื่องจักร (By Machine)", expanded=False):
             default_shift_machine = st.selectbox("กะมาตรฐาน (สำหรับทุกเครื่อง):", list(shift_mapping.keys()), index=0, key='def_mac')
             unique_machines = sorted(df['Machine'].unique())
@@ -186,7 +207,6 @@ if uploaded_file is not None:
 
         # --- คำนวณเป้าหมายที่ปรับแล้ว ---
         df['ตัวคูณกะสุทธิ'] = df[['ตัวคูณกะ_Date', 'ตัวคูณกะ_Machine']].min(axis=1)
-
         reverse_shift_mapping = {1.0: "3 กะ", 0.67: "2 กะ", 0.5: "1.5 กะ"}
         df['จำนวนกะ'] = df['ตัวคูณกะสุทธิ'].map(reverse_shift_mapping)
 
@@ -203,9 +223,9 @@ if uploaded_file is not None:
         st.sidebar.markdown("---")
         st.sidebar.header("🔍 ตัวกรองข้อมูล (Filters)")
         
-        # 📌 4.1 ตัวกรองช่วงวันที่ (Date Range Selector)
+        # 📌 4.1 ตัวกรองช่วงวันที่ 
         date_range = st.sidebar.date_input(
-            "📅 เลือกช่วงวันที่แสดงผล",
+            "📅 1. เลือกช่วงวันที่แสดงผล",
             value=(min_date_db, max_date_db),
             min_value=min_date_db,
             max_value=max_date_db
@@ -222,10 +242,10 @@ if uploaded_file is not None:
             end_disp_date = date_range[0]
             df = df[df['วันที่ผลิต'] == start_disp_date]
 
-        # 📌 4.2 ตัวกรองงานทดลองผลิต (Option ตัด Part ที่ผลิต 1-2 วัน)
+        # 📌 4.2 ตัวกรองงานทดลองผลิต
         st.sidebar.markdown("🧪 **การกรองงานทดลองผลิต (Trial)**")
         trial_option = st.sidebar.selectbox(
-            "เลือกเงื่อนไขการตัดงานทดลองผลิต:",
+            "2. เลือกเงื่อนไขการตัดงานทดลองผลิต:",
             [
                 "แสดงทั้งหมด (ไม่ตัด)",
                 "ตัด Part ที่ผลิตเพียง 1 วัน (<= 1 วัน)",
@@ -251,13 +271,24 @@ if uploaded_file is not None:
             df = df[df['จำนวนวันผลิตของPart'] > cut_days]
             st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= {cut_days} วัน):** ตัดออกทั้งหมด `{len(removed_parts)}` Part ({', '.join(removed_parts[:5])}{'...' if len(removed_parts)>5 else ''})")
 
-        # 📌 4.3 ตัวกรองเครื่องจักร
-        selected_machines = st.sidebar.multiselect("เลือกเครื่องจักร (Machine)", options=sorted(df['Machine'].unique()), default=[])
+        # 📌 4.3 ตัวกรองเครื่องจักรและชิ้นงาน (Machine & Part Filters)
+        st.sidebar.markdown("🚜 **การกรองเครื่องจักรและชิ้นงาน**")
+        
+        # [ใหม่] Filter กลุ่มเครื่องจักร
+        group_list = sorted(df['Machine Group'].unique().tolist())
+        selected_groups = st.sidebar.multiselect("3. เลือกกลุ่มเครื่องจักร (Machine Group)", options=group_list, default=[])
+        if selected_groups:
+            df = df[df['Machine Group'].isin(selected_groups)]
+
+        # Filter เครื่องจักรรายเครื่อง (ตัวเลือกจะกรองตามกลุ่มที่เลือกด้านบนโดยอัตโนมัติ)
+        machine_list = sorted(df['Machine'].unique().tolist())
+        selected_machines = st.sidebar.multiselect("4. เลือกเครื่องจักรรายเครื่อง (Machine)", options=machine_list, default=[])
         if selected_machines:
             df = df[df['Machine'].isin(selected_machines)]
             
-        # 📌 4.4 ตัวกรอง Part
-        selected_parts = st.sidebar.multiselect("เลือกชิ้นงาน (Part)", options=sorted(df['Part'].unique()), default=[])
+        # Filter Part
+        part_list = sorted(df['Part'].unique().tolist())
+        selected_parts = st.sidebar.multiselect("5. เลือกชิ้นงาน (Part)", options=part_list, default=[])
         if selected_parts:
             df = df[df['Part'].isin(selected_parts)]
 
@@ -323,14 +354,15 @@ if uploaded_file is not None:
         # --- 7. ตารางข้อมูลดิบ และปุ่ม Export ---
         st.subheader("📋 รายละเอียดข้อมูลการผลิต (Data Table)")
         
-        display_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
-        display_df = display_df.sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
+        display_df = df[['วันที่ผลิต', 'Machine Group', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
+        display_df = display_df.sort_values(by=['วันที่ผลิต', 'Machine Group', 'Machine'], ascending=[False, True, True])
         
         st.dataframe(
             display_df, 
             use_container_width=True,
             column_config={
                 "actual_qty": st.column_config.NumberColumn("ยอดผลิตจริง"),
+                "Machine Group": st.column_config.TextColumn("กลุ่มเครื่องจักร"),
                 "เป้าต่อวัน(3กะ)": st.column_config.NumberColumn("เป้า 3 กะ"),
                 "จำนวนกะ": st.column_config.TextColumn("จำนวนกะ"),
                 "ตัวคูณกะสุทธิ": st.column_config.NumberColumn("อัตราส่วนกะสุทธิ"),
@@ -349,4 +381,4 @@ if uploaded_file is not None:
         )
 
 else:
-    st.info("👈 กรุณาอัปโหลดไฟล์ **ข้อมูลผลิตรายวัน (Excel)** ที่แถบเมนูด้านซ้ายเพื่อเริ่มต้นดู Dashboard ครับ")
+    st.info("👈 กรุณาอัปโหลดไฟล์ หรือ นำไฟล์ data.xlsx ไปวางไว้ในโฟลเดอร์ระบบเพื่อล็อกข้อมูลเริ่มต้นครับ")
