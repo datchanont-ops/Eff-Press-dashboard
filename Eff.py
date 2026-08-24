@@ -3,10 +3,26 @@ import streamlit as st
 import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import streamlit.components.v1 as components
 import os
+import io
 
 # --- ตั้งค่าหน้าจอ Streamlit ---
 st.set_page_config(page_title="Press Daily Production Dashboard", layout="wide")
+
+# --- CSS สำหรับจัดระเบียบตอนสั่ง Print เป็น PDF ---
+st.markdown("""
+<style>
+    /* ซ่อนแถบเมนูและปุ่มที่ไม่จำเป็นเวลาสั่ง Print (Save as PDF) */
+    @media print {
+        .stPopover { display: none !important; }
+        .stExpander { display: none !important; }
+        .stDownloadButton { display: none !important; }
+        header { display: none !important; }
+        [data-testid="stSidebar"] { display: none !important; }
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- 1. ฟังก์ชันโหลดไฟล์เป้าหมาย (หลังบ้าน) ---
 @st.cache_data
@@ -297,7 +313,7 @@ if data_source is not None:
         if selected_parts:
             df = df[df['Part'].isin(selected_parts)]
 
-        # --- 📌 ส่วนบันทึก Report รายสัปดาห์ (พร้อมช่องระบุ Path) ---
+        # --- 📌 ส่วนบันทึก Report รายสัปดาห์ ---
         st.sidebar.markdown("---")
         st.sidebar.markdown("### 🗄️ เก็บประวัติรายงานรายสัปดาห์")
         
@@ -352,11 +368,63 @@ if data_source is not None:
         fig.update_yaxes(title_text="ประสิทธิภาพ (% Achieve)", secondary_y=True, ticksuffix="%")
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 7. ตารางข้อมูลดิบ และปุ่ม Export ---
-        st.subheader("📋 รายละเอียดข้อมูลการผลิต (Data Table)")
-        display_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
-        display_df = display_df.sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
+        st.markdown("---")
+
+        # --- 7. ตารางข้อมูลดิบ และปุ่ม Export เมนูใหม่ ---
+        col_table_header, col_export_menu = st.columns([3.5, 1])
         
+        with col_table_header:
+            st.subheader("📋 รายละเอียดข้อมูลการผลิต (Data Table)")
+            
+        with col_export_menu:
+            st.write("") # เว้นบรรทัดให้ปุ่มตรงกับ Header ตาราง
+            with st.popover("📥 Export Report"):
+                st.markdown("**1. ส่งออกข้อมูลเป็น Excel**")
+                
+                display_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
+                display_df = display_df.sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
+                
+                # จำลองการสร้างไฟล์ Excel ไว้ใน Memory เพื่อให้กดดาวน์โหลด
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    display_df.to_excel(writer, index=False, sheet_name='Production_Data')
+                excel_data = output.getvalue()
+                
+                st.download_button(
+                    label="💾 ดาวน์โหลด Data (.xlsx)",
+                    data=excel_data,
+                    file_name=f"Production_Report_{start_disp_date.strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+                
+                st.divider()
+                st.markdown("**2. ส่งออกหน้าเว็บพร้อมกราฟเป็น PDF**")
+                
+                # สคริปต์เรียกคำสั่ง Print ของเบราว์เซอร์
+                components.html(
+                    """
+                    <button onclick="window.parent.print()" style="
+                        background-color: #EF553B; 
+                        border: none;
+                        color: white;
+                        padding: 10px 20px;
+                        text-align: center;
+                        border-radius: 5px;
+                        cursor: pointer;
+                        width: 100%;
+                        font-family: sans-serif;
+                        font-weight: bold;
+                        font-size: 14px;
+                    ">🖨️ Print / Save as PDF</button>
+                    <p style="font-size:12px; color:gray; font-family:sans-serif; text-align:center; margin-top:10px;">
+                    * แนะนำให้เปิดตัวเลือก <b>'Background graphics'</b> ในตั้งค่า Print ของเบราว์เซอร์เพื่อให้กราฟแสดงสีสันครบถ้วน
+                    </p>
+                    """,
+                    height=110
+                )
+
+        # แสดงตารางข้อมูล
         st.dataframe(
             display_df, 
             use_container_width=True,
@@ -370,9 +438,6 @@ if data_source is not None:
                 "% Achieve": st.column_config.ProgressColumn("% เทียบเป้า", format="%.2f%%", min_value=0, max_value=150)
             }
         )
-        
-        csv_data = display_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(label="📥 ดาวน์โหลดข้อมูล (Export to CSV)", data=csv_data, file_name=f"Production_Data_Export.csv", mime="text/csv")
 
 else:
     st.info("👈 กรุณาอัปโหลดไฟล์ หรือ นำไฟล์ data.xlsx ไปวางไว้ในโฟลเดอร์โปรแกรมเพื่อล็อกข้อมูลเริ่มต้นครับ")
