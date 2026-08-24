@@ -23,12 +23,11 @@ def load_target_data():
     except Exception as e:
         return None, "❌ **ไม่พบไฟล์เป้าหมาย:** กรุณาสร้างไฟล์เป้าหมายการผลิต ตั้งชื่อว่า `target.xlsx` แล้วนำมาวางไว้ในโฟลเดอร์เดียวกับโปรแกรมครับ"
 
-# --- 2. ฟังก์ชันโหลดไฟล์ผลิตรายวัน (จากการอัปโหลด หรือไฟล์ล็อกในระบบ) ---
+# --- 2. ฟังก์ชันโหลดไฟล์ผลิตรายวัน ---
 @st.cache_data
 def load_daily_data(file, df_target):
     try:
         xls = pd.ExcelFile(file)
-        
         if 'pd' in xls.sheet_names:
             df_pd = pd.read_excel(xls, 'pd')
         else:
@@ -37,8 +36,7 @@ def load_daily_data(file, df_target):
         df = df_pd[['Material', 'Document Header Text', 'Qty in Un. of Entry', 'Posting Date', 'Entry Date', 'Time of Entry']].copy()
 
         def extract_machine(text):
-            if pd.isna(text):
-                return None
+            if pd.isna(text): return None
             parts = str(text).split('/')
             if len(parts) >= 2 and str(text).startswith('1/'):
                 return parts[1]
@@ -191,6 +189,23 @@ if data_source is not None:
             
             df['ตัวคูณกะ_Machine'] = df['Machine'].map(shift_multiplier_machine)
 
+        # --- 📌 สรุปรายการที่ตั้งค่าปรับลดกะ (< 3 กะ) กันพลาด ---
+        adjusted_dates = edited_shift_date_df[edited_shift_date_df['กะการทำงาน'] != "3 กะ (เป้า 100%)"]
+        adjusted_macs = edited_shift_machine_df[edited_shift_machine_df['กะการทำงาน'] != "3 กะ (เป้า 100%)"]
+        
+        if not adjusted_dates.empty or not adjusted_macs.empty:
+            alert_text = "**⚠️ สรุปรายการที่ตั้งลดกะ (น้อยกว่า 3 กะ):**\n"
+            if not adjusted_dates.empty:
+                alert_text += "\n**📅 ปรับลดรายวัน:**\n"
+                for _, row in adjusted_dates.iterrows():
+                    alert_text += f"- วันที่ {row['วันที่'].strftime('%d/%m/%Y')} ➔ {row['กะการทำงาน']}\n"
+            if not adjusted_macs.empty:
+                alert_text += "\n**🚜 ปรับลดรายเครื่องจักร:**\n"
+                for _, row in adjusted_macs.iterrows():
+                    alert_text += f"- เครื่อง {row['Machine']} ➔ {row['กะการทำงาน']}\n"
+            
+            st.sidebar.warning(alert_text)
+
         # --- คำนวณเป้าหมายที่ปรับแล้ว ---
         df['ตัวคูณกะสุทธิ'] = df[['ตัวคูณกะ_Date', 'ตัวคูณกะ_Machine']].min(axis=1)
 
@@ -210,7 +225,7 @@ if data_source is not None:
         st.sidebar.markdown("---")
         st.sidebar.header("🔍 ตัวกรองข้อมูล (Filters)")
         
-        # 📌 4.1 ตัวกรองช่วงวันที่ (Date Range Selector)
+        # 📌 4.1 ตัวกรองช่วงวันที่
         date_range = st.sidebar.date_input(
             "📅 เลือกช่วงวันที่แสดงผล",
             value=(min_date_db, max_date_db),
@@ -229,7 +244,7 @@ if data_source is not None:
             end_disp_date = date_range[0]
             df = df[df['วันที่ผลิต'] == start_disp_date]
 
-        # 📌 4.2 ตัวกรองงานทดลองผลิต (Option ตัด Part ที่ผลิต 1-2 วัน)
+        # 📌 4.2 ตัวกรองงานทดลองผลิต
         st.sidebar.markdown("🧪 **การกรองงานทดลองผลิต (Trial)**")
         trial_option = st.sidebar.selectbox(
             "เลือกเงื่อนไขการตัดงานทดลองผลิต:",
@@ -258,7 +273,7 @@ if data_source is not None:
             df = df[df['จำนวนวันผลิตของPart'] > cut_days]
             st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= {cut_days} วัน):** ตัดออกทั้งหมด `{len(removed_parts)}` Part ({', '.join(removed_parts[:5])}{'...' if len(removed_parts)>5 else ''})")
 
-        # 📌 4.3 ตัวกรองกลุ่มเครื่องจักร (Machine Group)
+        # 📌 4.3 ตัวกรองกลุ่มเครื่องจักร
         st.sidebar.markdown("⚙️ **ตัวกรองเครื่องจักร**")
         machine_groups = ['INJ', 'INM', '510', 'VAC', '400T', '300T', '350T']
         selected_groups = st.sidebar.multiselect("1. เลือกกลุ่มเครื่องจักร (Machine Group)", options=machine_groups, default=[])
@@ -278,7 +293,26 @@ if data_source is not None:
         if selected_parts:
             df = df[df['Part'].isin(selected_parts)]
 
-        # --- 📌 แสดงแถบสถานะช่วงวันที่ที่เลือกแสดงผลใน Dashboard ---
+        # --- 📌 ส่วนบันทึก Report รายสัปดาห์ ---
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🗄️ เก็บประวัติรายงานรายสัปดาห์")
+        
+        current_week = datetime.date.today().strftime("Week_%W_%Y")
+        report_week = st.sidebar.text_input("ระบุชื่อสัปดาห์ที่ต้องการบันทึก", value=current_week)
+        
+        if st.sidebar.button("💾 บันทึก Snapshot เข้าระบบ", use_container_width=True):
+            report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'weekly_reports')
+            os.makedirs(report_dir, exist_ok=True)
+            
+            save_path = os.path.join(report_dir, f"Production_Report_{report_week}.csv")
+            
+            export_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
+            export_df = export_df.sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
+            
+            export_df.to_csv(save_path, index=False, encoding='utf-8-sig')
+            st.sidebar.success(f"✅ บันทึกไฟล์สำเร็จเรียบร้อย!\n(จัดเก็บไว้ในโฟลเดอร์ weekly_reports)")
+
+        # --- 📌 แสดงแถบสถานะช่วงวันที่ ---
         days_count = (end_disp_date - start_disp_date).days + 1
         st.success(f"📅 **ช่วงวันที่เลือกแสดงผล:** {start_disp_date.strftime('%d/%m/%Y')} ถึง {end_disp_date.strftime('%d/%m/%Y')} (รวม {days_count:,} วัน)")
 
