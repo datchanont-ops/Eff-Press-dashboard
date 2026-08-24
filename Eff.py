@@ -31,7 +31,6 @@ st.markdown("""
         padding-top: 0rem;
         padding-bottom: 0rem;
     }
-    
     @media print {
         .stPopover { display: none !important; }
         .stExpander { display: none !important; }
@@ -55,30 +54,39 @@ def load_and_process(db_file, up_file, wip_reduction_pct):
         wip_fg['Material'] = wip_fg['Material'].astype(str)
         wip_fg['Material'] = wip_fg['Material'].str.replace(r';A1$', '', regex=True)
         wip_fg['Material'] = wip_fg['Material'].str.replace(r';A2$', '', regex=True)
-        
         wip_agg = wip_fg.groupby('Material', as_index=False)['Unrestricted'].sum()
         
-        fo_cols = [c for c in data_fo.columns if 'FO' in c and '(Pcs)' in c and re.search(r'\d{2}\.\d{4}', c)]
-        
+        # --- ดึงยอดชิ้นงาน (Pcs) ---
+        fo_cols = [c for c in data_fo.columns if 'FO' in str(c).upper() and '(PCS)' in str(c).upper() and re.search(r'\d{2}\.\d{4}', str(c))]
         if len(fo_cols) >= 3:
             fo_cols.sort(key=lambda x: pd.to_datetime(re.search(r'\d{2}\.\d{4}', x).group(), format='%m.%Y'))
             fo_n_minus_1_col = fo_cols[-3] 
             fo_n_col = fo_cols[-2]         
             fo_n1_col = fo_cols[-1]        
         else:
-            fo_n_minus_1_col = [c for c in data_fo.columns if 'FO' in c and '(Pcs)' in c and '07' in c][0]
-            fo_n_col = [c for c in data_fo.columns if 'FO' in c and '(Pcs)' in c and '08' in c][0]
-            fo_n1_col = [c for c in data_fo.columns if 'FO' in c and '(Pcs)' in c and '09' in c][0]
+            fo_n_minus_1_col = [c for c in data_fo.columns if 'FO' in str(c).upper() and '07' in str(c)][0]
+            fo_n_col = [c for c in data_fo.columns if 'FO' in str(c).upper() and '08' in str(c)][0]
+            fo_n1_col = [c for c in data_fo.columns if 'FO' in str(c).upper() and '09' in str(c)][0]
 
-        ord_n_minus_1_col = fo_n_minus_1_col.replace('FO', 'ORD')
-        ord_n_col = fo_n_col.replace('FO', 'ORD')
-        ord_n1_col = fo_n1_col.replace('FO', 'ORD')
+        ord_n_minus_1_col = fo_n_minus_1_col.replace('FO', 'ORD').replace('fo', 'ord')
+        ord_n_col = fo_n_col.replace('FO', 'ORD').replace('fo', 'ord')
+        ord_n1_col = fo_n1_col.replace('FO', 'ORD').replace('fo', 'ord')
 
-        df = data_fo[['Material', 'Description', fo_n_minus_1_col, ord_n_minus_1_col, fo_n_col, ord_n_col, fo_n1_col, ord_n1_col]].copy()
+        # --- ดึงยอดเงิน (Amt) ---
+        fo_n_col_amt = re.sub(r'\(Pcs\)', '(Amt)', fo_n_col, flags=re.IGNORECASE)
+        ord_n_col_amt = re.sub(r'\(Pcs\)', '(Amt)', ord_n_col, flags=re.IGNORECASE)
+        
+        if fo_n_col_amt not in data_fo.columns: data_fo[fo_n_col_amt] = 0
+        if ord_n_col_amt not in data_fo.columns: data_fo[ord_n_col_amt] = 0
+
+        df = data_fo[['Material', 'Description', fo_n_minus_1_col, ord_n_minus_1_col, fo_n_col, ord_n_col, fo_n1_col, ord_n1_col, fo_n_col_amt, ord_n_col_amt]].copy()
         
         df['Max_N_minus_1'] = df[[fo_n_minus_1_col, ord_n_minus_1_col]].max(axis=1).fillna(0)
         df['Max_N'] = df[[fo_n_col, ord_n_col]].max(axis=1).fillna(0)
         df['Max_N1'] = df[[fo_n1_col, ord_n1_col]].max(axis=1).fillna(0)
+        
+        # คำนวณยอดขาย Amt เดือน N
+        df['Max_N_Amt'] = df[[fo_n_col_amt, ord_n_col_amt]].max(axis=1).fillna(0)
         
         df = pd.merge(df, wip_agg, on='Material', how='left').fillna(0)
         df['Unrestricted'] = df['Unrestricted'] * (1 - (wip_reduction_pct / 100.0))
@@ -94,12 +102,11 @@ def load_and_process(db_file, up_file, wip_reduction_pct):
         df['Req_Hours'] = df['Req_Hours'].fillna(0)
 
         req_by_mach = df.groupby('Machine Type', as_index=False)['Req_Hours'].sum()
-        
         mach_summary = mc_data[['Machine Type', 'จำนวนเครื่องทั้งหมด', 'จำนวนเครื่องที่ให้ใช้ได้']].copy().dropna(subset=['Machine Type'])
         mach_summary.rename(columns={'จำนวนเครื่องทั้งหมด': 'Total Machines', 'จำนวนเครื่องที่ให้ใช้ได้': 'Usable Machines'}, inplace=True)
         mach_summary = pd.merge(mach_summary, req_by_mach, on='Machine Type', how='left').fillna(0)
 
-        df_detail = df[['Material', 'Description', 'Max_N_minus_1', 'Max_N', 'Max_N1', 'Req_Qty', 'Semi Part', 'Machine Type', 'Req_Hours']].copy()
+        df_detail = df[['Material', 'Description', 'Max_N_minus_1', 'Max_N', 'Max_N1', 'Max_N_Amt', 'Req_Qty', 'Semi Part', 'Machine Type', 'Req_Hours']].copy()
         return mach_summary, df_detail, None
     except Exception as e:
         return None, None, f"เกิดข้อผิดพลาดในการประมวลผล: {str(e)}"
@@ -179,70 +186,45 @@ with col_export:
             use_container_width=True
         )
         st.divider()
-        st.markdown("**2. ส่งออกหน้าเว็บพร้อมกราฟเป็น PDF**")
+        st.markdown("**2. ส่งออกเป็น PDF**")
         components.html(
             """
             <button onclick="window.parent.print()" style="
-                background-color: #EF553B; 
-                border: none;
-                color: white;
-                padding: 10px 20px;
-                text-align: center;
-                border-radius: 5px;
-                cursor: pointer;
-                width: 100%;
-                font-family: sans-serif;
-                font-weight: bold;
-                font-size: 14px;
+                background-color: #EF553B; border: none; color: white;
+                padding: 10px 20px; text-align: center; border-radius: 5px;
+                cursor: pointer; width: 100%; font-family: sans-serif;
+                font-weight: bold; font-size: 14px;
             ">🖨️ Print / Save as PDF</button>
-            <p style="font-size:12px; color:gray; font-family:sans-serif; text-align:center; margin-top:10px;">
+            <p style="font-size:12px; color:gray; text-align:center; margin-top:10px;">
             * เปิดตัวเลือก <b>'Background graphics'</b> ตอน Print เสมอ
             </p>
-            """,
-            height=110
+            """, height=110
         )
 
 # ==========================================
-# 2. KPI Cards
+# 2. Side-by-Side: Easy Adjust & Bar Chart
 # ==========================================
-total_req = cfg['Req_Hours'].sum()
-total_sales_n = df_detail['Max_N'].sum() # คำนวณยอดขายเดือน N (Amt)
-
-kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-kpi1.metric("💰 ยอดขายเดือน N (Amt)", f"{total_sales_n:,.0f} Pcs")
-kpi2.metric("⏱️ ชั่วโมงผลิตที่ต้องการรวม", f"{total_req:,.0f} ชม.")
-# (KPI อื่นๆ จะคำนวณและแสดงด้านล่าง หลังจากรับค่าจากแผงควบคุมแล้ว)
-kpi_placeholder3 = kpi3.empty()
-kpi_placeholder4 = kpi4.empty()
-kpi_placeholder5 = kpi5.empty()
-
-st.divider()
-
-# ==========================================
-# 3. Side-by-Side: Easy Adjust & Bar Chart
-# ==========================================
-# แบ่งพื้นที่: ซ้าย (แผงปรับแต่งแบบกระชับ) 35% | ขวา (กราฟแท่ง) 65%
+# วางแผงปรับแต่ง ไว้ข้างซ้ายของกราฟแท่ง
 col_adj, col_chart = st.columns([1.5, 2.5])
-
 over_machines_alerts = []
 
 with col_adj:
-    st.markdown("#### 🎛️ แผงปรับแต่งเครื่องจักร (Easy Adjust)")
+    st.markdown("#### 🎛️ ปรับแต่งกะ/OEE")
     
-    # 🔄 ปุ่ม Bulk Update วางไว้ด้านบนสุดของแผงควบคุม
-    b_col1, b_col2 = st.columns([1, 1])
-    bulk_oee = b_col1.number_input("OEE รวม(%)", value=85.0, min_value=1.0, max_value=100.0, help="ตั้ง OEE พร้อมกันทุกเครื่อง")
-    if b_col2.button("✨ อัปเดตทุกเครื่อง", use_container_width=True):
+    # ปุ่ม Bulk Update
+    b_col1, b_col2 = st.columns([1.5, 1])
+    bulk_oee = b_col1.number_input("ตั้ง OEE(%) ทุกเครื่อง", value=85.0, min_value=1.0, max_value=100.0)
+    if b_col2.button("✨ อัปเดต", use_container_width=True):
         for mt in cfg['Machine Type']:
             st.session_state.oee_dict[mt] = bulk_oee
         st.rerun() 
         
     st.caption("เลื่อนลงเพื่อปรับตั้งค่ากะ/OEE รายเครื่องจักร")
     
-    # ยัดแผงควบคุมใส่กล่อง Scrollable (ลดพื้นที่ความสูง)
-    with st.container(height=450):
+    # จับใส่กล่องความสูงจำกัดให้มี Scrollbar
+    with st.container(height=420):
         h1, h2, h3, h4, h5 = st.columns([2.5, 1, 1.5, 1.5, 1.5])
-        h1.write("**เครื่องจักร**")
+        h1.write("**Machine**")
         h2.write("**Total**")
         h3.write("**ใช้**")
         h4.write("**กะ**")
@@ -284,18 +266,8 @@ cfg['Available Hours'] = cfg['Usable Machines'] * cfg['Capacity_Per_Machine']
 cfg['Utilization (%)'] = np.where(cfg['Available Hours'] > 0, (cfg['Req_Hours'] / cfg['Available Hours']) * 100.0, 0.0)
 cfg['Req_Machines'] = np.where(cfg['Capacity_Per_Machine'] > 0, cfg['Req_Hours'] / cfg['Capacity_Per_Machine'], 0.0)
 
-# --- อัปเดต KPI ตัวที่เหลือ ---
-total_avail = cfg['Available Hours'].sum()
-overall_util = (total_req / total_avail) * 100 if total_avail > 0 else 0
-over_cap_count = len(cfg[cfg['Utilization (%)'] > 100])
-total_req_machines = cfg['Req_Machines'].sum()
-
-kpi_placeholder3.metric("💡 เครื่องพร้อมใช้ (ตั้งค่า)", f"{int(cfg['Usable Machines'].sum())} เครื่อง")
-kpi_placeholder4.metric("📈 Utilization เฉลี่ยรวม", f"{overall_util:.1f}%")
-kpi_placeholder5.metric("⚠️ เกินกำลัง (>100%)", f"{over_cap_count} ประเภท", delta="Over Capacity" if over_cap_count > 0 else "ปกติ", delta_color="inverse")
-
 with col_chart:
-    st.markdown("#### 📊 กราฟวิเคราะห์ Utilization & OEE (Real-time)")
+    st.markdown("#### 📊 กราฟวิเคราะห์ Utilization & OEE")
     fig_bar = make_subplots(specs=[[{"secondary_y": True}]])
     bar_colors = ['#EF553B' if val > 100 else '#1f77b4' for val in cfg['Utilization (%)']]
     
@@ -306,8 +278,9 @@ with col_chart:
     ), secondary_y=False)
     
     fig_bar.add_trace(go.Scatter(
-        x=cfg['Machine Type'], y=cfg['OEE (%)'], mode='lines', name="OEE (%)",
-        line=dict(color='#FF8C00', width=3.5, shape='spline', smoothing=1.2), 
+        x=cfg['Machine Type'], y=cfg['OEE (%)'], mode='lines+markers', name="OEE (%)",
+        line=dict(color='#FFA15A', width=3, shape='spline'), 
+        marker=dict(size=9, symbol='diamond', line=dict(width=1, color='white')),
         hovertemplate="<b>%{x}</b><br>OEE: %{y:.1f}%<extra></extra>"
     ), secondary_y=True)
     
@@ -315,12 +288,31 @@ with col_chart:
                       annotation_text="Max Capacity 100%", annotation_position="top left",
                       annotation_font=dict(color="#EF553B", size=12), secondary_y=False)
     
-    fig_bar.update_layout(height=450, margin=dict(t=20, b=50, l=0, r=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    fig_bar.update_layout(height=480, margin=dict(t=20, b=80, l=0, r=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1), hovermode="x unified")
-    
     fig_bar.update_yaxes(title_text="Utilization (%)", gridcolor='rgba(200,200,200,0.2)', secondary_y=False, rangemode='tozero')
     fig_bar.update_yaxes(title_text="OEE (%)", showgrid=False, secondary_y=True, range=[0, 110])
     st.plotly_chart(fig_bar, use_container_width=True)
+
+st.divider()
+
+# ==========================================
+# 3. KPI Cards
+# ==========================================
+total_req = cfg['Req_Hours'].sum()
+total_avail = cfg['Available Hours'].sum()
+overall_util = (total_req / total_avail) * 100 if total_avail > 0 else 0
+over_cap_count = len(cfg[cfg['Utilization (%)'] > 100])
+total_req_machines = cfg['Req_Machines'].sum()
+total_sales_n = df_detail['Max_N_Amt'].sum() # ยอดขายเดือน N (Amt)
+
+kpi0, kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(6)
+kpi0.metric("💰 ยอดขายเดือน N", f"฿ {total_sales_n:,.0f}")
+kpi1.metric("💡 เครื่องพร้อมใช้", f"{int(cfg['Usable Machines'].sum())} เครื่อง")
+kpi2.metric("⚙️ เครื่องที่ใช้จริง", f"{total_req_machines:.1f} เครื่อง")
+kpi3.metric("⏱️ ชั่วโมงผลิตรวม", f"{total_req:,.0f} ชม.")
+kpi4.metric("📈 Util. เฉลี่ย", f"{overall_util:.1f}%")
+kpi5.metric("⚠️ เครื่องตึงตัว", f"{over_cap_count} ประเภท", delta="Over Capacity" if over_cap_count > 0 else "ปกติ", delta_color="inverse")
 
 st.divider()
 
@@ -395,15 +387,16 @@ with col_deep1:
         tabs = st.tabs([mt[:12] + ".." if len(mt) > 12 else mt for mt in machine_types])
         for i, m_type in enumerate(machine_types):
             with tabs[i]:
-                m_df = top_5_parts[top_5_parts['Machine Type'] == m_type][['Material', 'Description', 'Max_N', 'Req_Hours']]
-                m_df = m_df.rename(columns={'Max_N': 'ยอดขายเดือน N (Amt)'}) # แสดงคอลัมน์ Amt
-                st.dataframe(m_df.style.format({'ยอดขายเดือน N (Amt)': '{:,.0f}', 'Req_Hours': '{:,.1f} ชม.'}), use_container_width=True, hide_index=True)
+                # เพิ่ม Max_N_Amt มาแสดงในตาราง
+                m_df = top_5_parts[top_5_parts['Machine Type'] == m_type][['Material', 'Description', 'Req_Qty', 'Max_N_Amt', 'Req_Hours']]
+                m_df = m_df.rename(columns={'Max_N_Amt': 'ยอดขายเดือน N (Amt)'})
+                st.dataframe(m_df.style.format({'Req_Qty': '{:,.0f}', 'ยอดขายเดือน N (Amt)': '{:,.0f}', 'Req_Hours': '{:,.1f} ชม.'}), use_container_width=True, hide_index=True)
     else:
         st.info("ไม่มีข้อมูลชั่วโมงการผลิต")
 
 with col_deep2:
     st.markdown("### 📈 Top 5 Parts (Trend 3 เดือน สวิง > 30%)")
-    st.caption("ชิ้นงานที่กินชั่วโมงเครื่องจักรเยอะ (Req_Hours) และมียอดออเดอร์สวิงเกิน 30%")
+    st.caption("ชิ้นงานที่กินชั่วโมงเครื่องจักรเยอะและมียอดออเดอร์ (Pcs) สวิงเกิน 30%")
     
     df_trend = df_detail[['Machine Type', 'Material', 'Max_N_minus_1', 'Max_N', 'Max_N1', 'Req_Hours']].copy().drop_duplicates(subset=['Material'])
     
@@ -431,13 +424,13 @@ with col_deep2:
         return f'color: {color}; font-weight: bold'
     
     tab_up, tab_down = st.tabs(["🟢 แนวโน้มยอดเพิ่ม (Top 5 Up)", "🔴 แนวโน้มยอดลด (Top 5 Down)"])
-    disp_cols = ['Machine Type', 'Material', 'Max_N', 'Trend', '% Change', 'Req_Hours']
+    disp_cols = ['Machine Type', 'Material', 'Max_N_minus_1', 'Max_N', 'Max_N1', 'Trend', '% Change', 'Req_Hours']
     
     with tab_up:
         if not df_up.empty:
-            disp_up = df_up[disp_cols].rename(columns={'Max_N': 'ยอดขายเดือน N (Amt)'})
+            disp_up = df_up[disp_cols].rename(columns={'Max_N_minus_1': 'Mth N-1 (Pcs)', 'Max_N': 'Mth N (Pcs)', 'Max_N1': 'Mth N+1 (Pcs)'})
             st.dataframe(
-                disp_up.style.format({'ยอดขายเดือน N (Amt)': '{:,.0f}', '% Change': '{:+.1f}%', 'Req_Hours': '{:,.1f}'})
+                disp_up.style.format({'Mth N-1 (Pcs)': '{:,.0f}', 'Mth N (Pcs)': '{:,.0f}', 'Mth N+1 (Pcs)': '{:,.0f}', '% Change': '{:+.1f}%', 'Req_Hours': '{:,.1f}'})
                        .map(style_change, subset=['% Change']),
                 use_container_width=True, hide_index=True
             )
@@ -446,9 +439,9 @@ with col_deep2:
             
     with tab_down:
         if not df_down.empty:
-            disp_down = df_down[disp_cols].rename(columns={'Max_N': 'ยอดขายเดือน N (Amt)'})
+            disp_down = df_down[disp_cols].rename(columns={'Max_N_minus_1': 'Mth N-1 (Pcs)', 'Max_N': 'Mth N (Pcs)', 'Max_N1': 'Mth N+1 (Pcs)'})
             st.dataframe(
-                disp_down.style.format({'ยอดขายเดือน N (Amt)': '{:,.0f}', '% Change': '{:+.1f}%', 'Req_Hours': '{:,.1f}'})
+                disp_down.style.format({'Mth N-1 (Pcs)': '{:,.0f}', 'Mth N (Pcs)': '{:,.0f}', 'Mth N+1 (Pcs)': '{:,.0f}', '% Change': '{:+.1f}%', 'Req_Hours': '{:,.1f}'})
                        .map(style_change, subset=['% Change']),
                 use_container_width=True, hide_index=True
             )
