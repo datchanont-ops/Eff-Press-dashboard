@@ -151,7 +151,8 @@ if data_source is not None:
         st.sidebar.markdown("---")
         st.sidebar.header("🎯 ตั้งค่าประสิทธิภาพ")
         
-        init_oee = int(saved_settings.get('oee_val', 100))
+        # 📌 ปรับค่าเริ่มต้น OEE ให้เป็น 90% (ถ้าไม่เคยเซฟค่าอื่นทับ)
+        init_oee = int(saved_settings.get('oee_val', 90))
         init_setup = float(saved_settings.get('setup_hours', 4.0))
         
         oee_val = st.sidebar.number_input("1. ค่า O.E.E. (1-100%)", min_value=1, max_value=100, value=init_oee, step=1)
