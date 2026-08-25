@@ -6,6 +6,7 @@ from plotly.subplots import make_subplots
 import streamlit.components.v1 as components
 import os
 import io
+import json
 
 # --- ตั้งค่าหน้าจอ Streamlit ---
 st.set_page_config(page_title="Press Daily Production Dashboard", layout="wide")
@@ -13,7 +14,6 @@ st.set_page_config(page_title="Press Daily Production Dashboard", layout="wide")
 # --- CSS สำหรับจัดระเบียบตอนสั่ง Print เป็น PDF ---
 st.markdown("""
 <style>
-    /* ซ่อนแถบเมนูและปุ่มที่ไม่จำเป็นเวลาสั่ง Print (Save as PDF) */
     @media print {
         .stPopover { display: none !important; }
         .stExpander { display: none !important; }
@@ -111,8 +111,6 @@ if os.path.exists(template_file_name):
             file_name=template_file_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-else:
-    st.sidebar.warning(f"⚠️ ไม่พบไฟล์ {template_file_name} ในโฟลเดอร์โปรแกรม")
 
 st.sidebar.markdown("---")
 
@@ -139,14 +137,27 @@ if data_source is not None:
         max_date_db = df['วันที่ผลิต'].max()
         st.caption(f"📂 ฐานข้อมูลภาพรวมทั้งหมดในไฟล์: {min_date_db.strftime('%d/%m/%Y')} ถึง {max_date_db.strftime('%d/%m/%Y')}")
         
+        # 📌 โหลดไฟล์ตั้งค่า (ถ้ามี)
+        settings_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'eff_settings.json')
+        saved_settings = {}
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    saved_settings = json.load(f)
+            except:
+                pass
+
         # --- 2. ตั้งค่า O.E.E. และ เวลา Setup ---
         st.sidebar.markdown("---")
         st.sidebar.header("🎯 ตั้งค่าประสิทธิภาพ")
         
-        oee_val = st.sidebar.number_input("1. ค่า O.E.E. (1-100%)", min_value=1, max_value=100, value=100, step=1)
+        init_oee = int(saved_settings.get('oee_val', 100))
+        init_setup = float(saved_settings.get('setup_hours', 4.0))
+        
+        oee_val = st.sidebar.number_input("1. ค่า O.E.E. (1-100%)", min_value=1, max_value=100, value=init_oee, step=1)
         oee_multiplier = oee_val / 100.0
         
-        setup_hours = st.sidebar.number_input("2. เวลา Setup เปลี่ยน Part (ชั่วโมง)", min_value=0.0, max_value=24.0, value=4.0, step=0.5)
+        setup_hours = st.sidebar.number_input("2. เวลา Setup เปลี่ยน Part (ชั่วโมง)", min_value=0.0, max_value=24.0, value=init_setup, step=0.5)
         setup_deduct_ratio = setup_hours / 24.0
         
         # --- 3. จัดการตั้งค่า กะการทำงาน ---
@@ -159,12 +170,23 @@ if data_source is not None:
             "2 กะ (เป้า 67%)": 0.67,
             "1.5 กะ (เป้า 50%)": 0.5
         }
+        
+        saved_shift_date = saved_settings.get('shift_date', {})
+        saved_shift_mac = saved_settings.get('shift_mac', {})
+        saved_spec = saved_settings.get('shift_spec', [])
 
         # 3.1 รายวัน
         with st.sidebar.expander("📅 1. ตั้งค่ากะรายวัน (By Date)", expanded=False):
-            default_shift_date = st.selectbox("กะมาตรฐาน (สำหรับทุกวัน):", list(shift_mapping.keys()), index=0, key='def_date')
+            st.caption("ตั้งค่าเริ่มต้นถูกดึงมาจากที่เคยบันทึกไว้")
+            default_shift_date = st.selectbox("🔄 เปลี่ยนพร้อมกันทุกวัน:", ["(ใช้ค่าเดิม)"] + list(shift_mapping.keys()), index=0, key='def_date')
+            
             unique_dates = sorted(df['วันที่ผลิต'].unique())
-            shift_date_df = pd.DataFrame({'วันที่': unique_dates, 'กะการทำงาน': [default_shift_date] * len(unique_dates)})
+            if default_shift_date != "(ใช้ค่าเดิม)":
+                shift_date_data = [default_shift_date] * len(unique_dates)
+            else:
+                shift_date_data = [saved_shift_date.get(str(d), "3 กะ (เป้า 100%)") for d in unique_dates]
+                
+            shift_date_df = pd.DataFrame({'วันที่': unique_dates, 'กะการทำงาน': shift_date_data})
 
             edited_shift_date_df = st.data_editor(
                 shift_date_df,
@@ -180,9 +202,16 @@ if data_source is not None:
 
         # 3.2 รายเครื่องจักร
         with st.sidebar.expander("🚜 2. ตั้งค่ากะรายเครื่องจักร (By Machine)", expanded=False):
-            default_shift_machine = st.selectbox("กะมาตรฐาน (สำหรับทุกเครื่อง):", list(shift_mapping.keys()), index=0, key='def_mac')
+            st.caption("ตั้งค่าเริ่มต้นถูกดึงมาจากที่เคยบันทึกไว้")
+            default_shift_machine = st.selectbox("🔄 เปลี่ยนพร้อมกันทุกเครื่อง:", ["(ใช้ค่าเดิม)"] + list(shift_mapping.keys()), index=0, key='def_mac')
+            
             unique_machines = sorted(df['Machine'].unique())
-            shift_machine_df = pd.DataFrame({'Machine': unique_machines, 'กะการทำงาน': [default_shift_machine] * len(unique_machines)})
+            if default_shift_machine != "(ใช้ค่าเดิม)":
+                shift_mac_data = [default_shift_machine] * len(unique_machines)
+            else:
+                shift_mac_data = [saved_shift_mac.get(m, "3 กะ (เป้า 100%)") for m in unique_machines]
+                
+            shift_machine_df = pd.DataFrame({'Machine': unique_machines, 'กะการทำงาน': shift_mac_data})
 
             edited_shift_machine_df = st.data_editor(
                 shift_machine_df,
@@ -196,11 +225,16 @@ if data_source is not None:
             shift_multiplier_machine = {row['Machine']: shift_mapping[row['กะการทำงาน']] for _, row in edited_shift_machine_df.iterrows()}
             df['ตัวคูณกะ_Machine'] = df['Machine'].map(shift_multiplier_machine)
 
-        # 📌 3.3 ตั้งค่าเฉพาะกิจ (ระบุเครื่อง + วันที่)
+        # 3.3 ตั้งค่าเฉพาะกิจ
         with st.sidebar.expander("🎯 3. ตั้งค่ากะเฉพาะกิจ (เครื่อง + วันที่)", expanded=False):
             st.write("ลดกะบางเครื่องในบางวัน (กดเครื่องหมาย + เพื่อเพิ่มแถว)")
             
-            empty_spec_df = pd.DataFrame(columns=["วันที่", "เครื่องจักร", "กะการทำงาน"])
+            if saved_spec:
+                empty_spec_df = pd.DataFrame(saved_spec)
+                if 'วันที่' in empty_spec_df.columns:
+                    empty_spec_df['วันที่'] = pd.to_datetime(empty_spec_df['วันที่']).dt.date
+            else:
+                empty_spec_df = pd.DataFrame(columns=["วันที่", "เครื่องจักร", "กะการทำงาน"])
             
             edited_spec_df = st.data_editor(
                 empty_spec_df,
@@ -213,6 +247,36 @@ if data_source is not None:
                 hide_index=True, use_container_width=True, key='edit_spec'
             )
 
+        # --- 📌 ปุ่มบันทึกเงื่อนไข (Save Conditions) ---
+        st.sidebar.markdown("---")
+        if st.sidebar.button("💾 บันทึกเงื่อนไข (Save Conditions)", use_container_width=True):
+            sd_dict = {str(row['วันที่']): row['กะการทำงาน'] for _, row in edited_shift_date_df.iterrows()}
+            sm_dict = {row['Machine']: row['กะการทำงาน'] for _, row in edited_shift_machine_df.iterrows()}
+            
+            spec_list = []
+            if not edited_spec_df.empty:
+                for _, row in edited_spec_df.dropna().iterrows():
+                    spec_list.append({
+                        'วันที่': str(row['วันที่']),
+                        'เครื่องจักร': row['เครื่องจักร'],
+                        'กะการทำงาน': row['กะการทำงาน']
+                    })
+            
+            settings_to_save = {
+                'oee_val': oee_val,
+                'setup_hours': setup_hours,
+                'shift_date': sd_dict,
+                'shift_mac': sm_dict,
+                'shift_spec': spec_list
+            }
+            
+            try:
+                with open(settings_file, 'w', encoding='utf-8') as f:
+                    json.dump(settings_to_save, f, ensure_ascii=False, indent=4)
+                st.sidebar.success("✅ บันทึกเงื่อนไขเรียบร้อยแล้ว! (ใช้เป็นค่าเริ่มต้นในครั้งต่อไป)")
+            except Exception as e:
+                st.sidebar.error(f"❌ บันทึกไม่สำเร็จ: {e}")
+
         # --- คำนวณตัวคูณกะสุทธิ ---
         df['ตัวคูณกะสุทธิ'] = df[['ตัวคูณกะ_Date', 'ตัวคูณกะ_Machine']].min(axis=1)
 
@@ -222,7 +286,6 @@ if data_source is not None:
                     spec_date = row['วันที่']
                     spec_mac = row['เครื่องจักร']
                     spec_mult = shift_mapping[row['กะการทำงาน']]
-                    
                     mask = (df['วันที่ผลิต'] == spec_date) & (df['Machine'] == spec_mac)
                     df.loc[mask, 'ตัวคูณกะสุทธิ'] = spec_mult
                 except Exception:
@@ -260,8 +323,9 @@ if data_source is not None:
         df['เป้าหมายที่ปรับแล้ว'] = df['เป้าหมายก่อนหักSetup'] - df['ยอดลดเป้าSetup']
         df['เป้าหมายที่ปรับแล้ว'] = df['เป้าหมายที่ปรับแล้ว'].clip(lower=0)
         
+        # 📌 จำกัด % Achieve สูงสุดที่ 100% 
         df['% Achieve'] = (df['actual_qty'] / df['เป้าหมายที่ปรับแล้ว']) * 100
-        df['% Achieve'] = df['% Achieve'].round(2).fillna(0) 
+        df['% Achieve'] = df['% Achieve'].clip(upper=100.0).round(2).fillna(0)
 
         # --- 4. ตัวกรองข้อมูล (Filters) ---
         st.sidebar.markdown("---")
@@ -313,29 +377,6 @@ if data_source is not None:
         if selected_parts:
             df = df[df['Part'].isin(selected_parts)]
 
-        # --- 📌 ส่วนบันทึก Report รายสัปดาห์ ---
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("### 🗄️ เก็บประวัติรายงานรายสัปดาห์")
-        
-        current_week = datetime.date.today().strftime("Week_%W_%Y")
-        report_week = st.sidebar.text_input("ระบุชื่อสัปดาห์ที่ต้องการบันทึก", value=current_week)
-        
-        default_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'weekly_reports')
-        custom_dir = st.sidebar.text_input("ระบุโฟลเดอร์ที่ต้องการจัดเก็บ (Path):", value=default_dir)
-        
-        if st.sidebar.button("💾 บันทึก Snapshot เข้าระบบ", use_container_width=True):
-            try:
-                os.makedirs(custom_dir, exist_ok=True)
-                save_path = os.path.join(custom_dir, f"Production_Report_{report_week}.csv")
-                
-                export_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
-                export_df = export_df.sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
-                
-                export_df.to_csv(save_path, index=False, encoding='utf-8-sig')
-                st.sidebar.success(f"✅ บันทึกไฟล์สำเร็จ!\nจัดเก็บไว้ที่:\n`{save_path}`")
-            except Exception as e:
-                st.sidebar.error(f"❌ ไม่สามารถบันทึกได้ กรุณาตรวจสอบว่า Path ถูกต้องหรือไม่: {e}")
-
         # --- 📌 แสดงแถบสถานะช่วงวันที่ ---
         days_count = (end_disp_date - start_disp_date).days + 1
         st.success(f"📅 **ช่วงวันที่เลือกแสดงผล:** {start_disp_date.strftime('%d/%m/%Y')} ถึง {end_disp_date.strftime('%d/%m/%Y')} (รวม {days_count:,} วัน)")
@@ -346,17 +387,20 @@ if data_source is not None:
         total_target_original = df['เป้าต่อวัน(3กะ)'].sum()
         total_target = df['เป้าหมายที่ปรับแล้ว'].sum()
         overall_achieve = (total_actual / total_target * 100) if total_target > 0 else 0
+        overall_achieve = min(overall_achieve, 100.0) # 📌 จำกัด % ภาพรวมที่ 100%
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1: st.metric("ยอดผลิตจริง (Actual)", f"{total_actual:,.0f} Pcs")
         with col2: st.metric("เป้า 100% (Original Target)", f"{total_target_original:,.0f} Pcs")
-        with col3: st.metric("เป้าหลังหัก กะ/OEE/Setup", f"{total_target:,.0f} Pcs")
+        with col3: st.metric("เป้าสุทธิ (Target)", f"{total_target:,.0f} Pcs")
         with col4: st.metric("ประสิทธิภาพรวม (% Achieve)", f"{overall_achieve:.2f}%")
+        with col5: st.metric("⚙️ ค่า O.E.E. (ตั้งค่า)", f"{oee_val}%")
 
         # --- 6. กราฟ 2 แกน (Plotly Dual-Axis Chart) ---
         st.subheader("📊 เปรียบเทียบยอดผลิตจริง กับ เป้าหมาย (พร้อม % Achieve)")
         daily_summary = df.groupby('วันที่ผลิต').agg({'actual_qty': 'sum', 'เป้าหมายที่ปรับแล้ว': 'sum'}).reset_index()
         daily_summary['% Achieve'] = (daily_summary['actual_qty'] / daily_summary['เป้าหมายที่ปรับแล้ว'] * 100).fillna(0).round(2)
+        daily_summary['% Achieve'] = daily_summary['% Achieve'].clip(upper=100.0) # 📌 จำกัดกราฟเส้นสูงสุด 100%
         
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(go.Bar(x=daily_summary['วันที่ผลิต'], y=daily_summary['actual_qty'], name="ยอดผลิตจริง (Actual)", marker_color='#1f77b4'), secondary_y=False)
@@ -377,14 +421,13 @@ if data_source is not None:
             st.subheader("📋 รายละเอียดข้อมูลการผลิต (Data Table)")
             
         with col_export_menu:
-            st.write("") # เว้นบรรทัดให้ปุ่มตรงกับ Header ตาราง
+            st.write("") 
             with st.popover("📥 Export Report"):
                 st.markdown("**1. ส่งออกข้อมูลเป็น Excel**")
                 
                 display_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'จำนวนกะ', 'ตัวคูณกะสุทธิ', 'Setup_Count', 'เป้าหมายที่ปรับแล้ว', '% Achieve']]
                 display_df = display_df.sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
                 
-                # จำลองการสร้างไฟล์ Excel ไว้ใน Memory เพื่อให้กดดาวน์โหลด
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     display_df.to_excel(writer, index=False, sheet_name='Production_Data')
@@ -401,7 +444,6 @@ if data_source is not None:
                 st.divider()
                 st.markdown("**2. ส่งออกหน้าเว็บพร้อมกราฟเป็น PDF**")
                 
-                # สคริปต์เรียกคำสั่ง Print ของเบราว์เซอร์
                 components.html(
                     """
                     <button onclick="window.parent.print()" style="
@@ -418,7 +460,7 @@ if data_source is not None:
                         font-size: 14px;
                     ">🖨️ Print / Save as PDF</button>
                     <p style="font-size:12px; color:gray; font-family:sans-serif; text-align:center; margin-top:10px;">
-                    * แนะนำให้เปิดตัวเลือก <b>'Background graphics'</b> ในตั้งค่า Print ของเบราว์เซอร์เพื่อให้กราฟแสดงสีสันครบถ้วน
+                    * แนะนำให้เปิดตัวเลือก <b>'Background graphics'</b> ในตั้งค่า Print
                     </p>
                     """,
                     height=110
@@ -435,7 +477,7 @@ if data_source is not None:
                 "ตัวคูณกะสุทธิ": st.column_config.NumberColumn("อัตราส่วนกะสุทธิ"),
                 "Setup_Count": st.column_config.NumberColumn("จำนวนครั้งเปลี่ยน Part"),
                 "เป้าหมายที่ปรับแล้ว": st.column_config.NumberColumn("เป้าสุทธิ"),
-                "% Achieve": st.column_config.ProgressColumn("% เทียบเป้า", format="%.2f%%", min_value=0, max_value=150)
+                "% Achieve": st.column_config.ProgressColumn("% เทียบเป้า", format="%.2f%%", min_value=0, max_value=100)
             }
         )
 
