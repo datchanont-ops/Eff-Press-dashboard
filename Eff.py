@@ -190,7 +190,6 @@ elif isinstance(date_range, tuple) and len(date_range) == 1:
 else:
     s_date, e_date = min_date, max_date
 
-# --- โชว์แถบสถานะวันที่ในจอหลัก ---
 st.info(f"📅 **ข้อมูลกำลังแสดงผลช่วงวันที่:** `{s_date.strftime('%d/%m/%Y')}` ถึง `{e_date.strftime('%d/%m/%Y')}`")
 
 # --- โหลด Settings ---
@@ -212,35 +211,46 @@ setup_deduct = setup_hours / 24.0
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🛠️ 4. ปรับกะการทำงาน (Shift)")
-shift_map = {"3 กะ (100%)": 1.0, "2 กะ (67%)": 0.67, "1.5 กะ (50%)": 0.5}
+shift_map = {"3 กะ (เป้า 100%)": 1.0, "2 กะ (เป้า 67%)": 0.67, "1.5 กะ (เป้า 50%)": 0.5}
+
+# 📌 ฟังก์ชันดักจับแก้ชื่อกะที่เซฟมาผิด/เซฟชื่อแบบสั้น
+def get_valid_shift(val):
+    val = str(val)
+    if val in shift_map: return val
+    if "1.5" in val: return "1.5 กะ (เป้า 50%)"
+    if "2" in val: return "2 กะ (เป้า 67%)"
+    return "3 กะ (เป้า 100%)"
 
 # 4.1 Date
 with st.sidebar.expander("📅 ปรับตามวัน (By Date)", expanded=False):
     sd_val = st.selectbox("เปลี่ยนทุกวัน:", ["(ใช้ค่าเดิม)"] + list(shift_map.keys()), key='def_d')
     u_dates = sorted(df['วันที่ผลิต'].unique())
-    s_d_data = [sd_val]*len(u_dates) if sd_val != "(ใช้ค่าเดิม)" else [saved_settings.get('shift_date', {}).get(str(d), "3 กะ (100%)") for d in u_dates]
+    s_d_data = [sd_val]*len(u_dates) if sd_val != "(ใช้ค่าเดิม)" else [get_valid_shift(saved_settings.get('shift_date', {}).get(str(d), "3 กะ (เป้า 100%)")) for d in u_dates]
     df_sd = st.data_editor(pd.DataFrame({'Date': u_dates, 'Shift': s_d_data}), hide_index=True, use_container_width=True)
-    df['mult_D'] = df['วันที่ผลิต'].map({row['Date']: shift_map[row['Shift']] for _, row in df_sd.iterrows()})
+    df['mult_D'] = df['วันที่ผลิต'].map({row['Date']: shift_map.get(row['Shift'], 1.0) for _, row in df_sd.iterrows()})
 
 # 4.2 Machine
 with st.sidebar.expander("🚜 ปรับตามเครื่อง (By Machine)", expanded=False):
     sm_val = st.selectbox("เปลี่ยนทุกเครื่อง:", ["(ใช้ค่าเดิม)"] + list(shift_map.keys()), key='def_m')
     u_macs = sorted(df['Machine'].unique())
-    s_m_data = [sm_val]*len(u_macs) if sm_val != "(ใช้ค่าเดิม)" else [saved_settings.get('shift_mac', {}).get(m, "3 กะ (100%)") for m in u_macs]
+    s_m_data = [sm_val]*len(u_macs) if sm_val != "(ใช้ค่าเดิม)" else [get_valid_shift(saved_settings.get('shift_mac', {}).get(m, "3 กะ (เป้า 100%)")) for m in u_macs]
     df_sm = st.data_editor(pd.DataFrame({'Machine': u_macs, 'Shift': s_m_data}), hide_index=True, use_container_width=True)
-    df['mult_M'] = df['Machine'].map({row['Machine']: shift_map[row['Shift']] for _, row in df_sm.iterrows()})
+    df['mult_M'] = df['Machine'].map({row['Machine']: shift_map.get(row['Shift'], 1.0) for _, row in df_sm.iterrows()})
 
 # 4.3 Spec
 with st.sidebar.expander("🎯 ปรับเฉพาะกิจ (Date+Machine)", expanded=False):
     saved_spec = saved_settings.get('shift_spec', [])
     df_sp = pd.DataFrame(saved_spec) if saved_spec else pd.DataFrame(columns=["Date", "Machine", "Shift"])
-    if not df_sp.empty and 'Date' in df_sp: df_sp['Date'] = pd.to_datetime(df_sp['Date']).dt.date
+    if not df_sp.empty and 'Shift' in df_sp.columns:
+        df_sp['Shift'] = df_sp['Shift'].apply(get_valid_shift)
+    if not df_sp.empty and 'Date' in df_sp.columns: 
+        df_sp['Date'] = pd.to_datetime(df_sp['Date']).dt.date
     df_spec = st.data_editor(df_sp, num_rows="dynamic", column_config={"Date": st.column_config.DateColumn(format="DD/MM/YYYY"), "Shift": st.column_config.SelectboxColumn(options=list(shift_map.keys()))}, hide_index=True, use_container_width=True)
 
 # --- 📌 กล่องแจ้งเตือน (สรุปรายการปรับลดกะ) ---
-adj_d = df_sd[df_sd['Shift'] != "3 กะ (100%)"]
-adj_m = df_sm[df_sm['Shift'] != "3 กะ (100%)"]
-adj_s = df_spec[df_spec['Shift'] != "3 กะ (100%)"].dropna() if not df_spec.empty else pd.DataFrame()
+adj_d = df_sd[df_sd['Shift'] != "3 กะ (เป้า 100%)"]
+adj_m = df_sm[df_sm['Shift'] != "3 กะ (เป้า 100%)"]
+adj_s = df_spec[df_spec['Shift'] != "3 กะ (เป้า 100%)"].dropna() if not df_spec.empty else pd.DataFrame()
 
 if not adj_d.empty or not adj_m.empty or not adj_s.empty:
     warn_txt = "**⚠️ สรุปรายการที่ปรับลดกะ:**\n"
@@ -268,7 +278,7 @@ if st.sidebar.button("💾 บันทึกการตั้งค่าท�
 df['mult_Net'] = df[['mult_D', 'mult_M']].min(axis=1)
 if not df_spec.empty:
     for _, r in df_spec.dropna().iterrows():
-        df.loc[(df['วันที่ผลิต'] == r['Date']) & (df['Machine'] == r['Machine']), 'mult_Net'] = shift_map[r['Shift']]
+        df.loc[(df['วันที่ผลิต'] == r['Date']) & (df['Machine'] == r['Machine']), 'mult_Net'] = shift_map.get(r['Shift'], 1.0)
 
 df['เป้าหมายสุทธิ'] = ((df['เป้าต่อวัน(3กะ)'] * df['mult_Net'] * oee_mult) - ((df['เป้าต่อวัน(3กะ)'] * setup_deduct) * df['Setup_Count'])).clip(lower=0)
 df['% Achieve'] = ((df['actual_qty'] / df['เป้าหมายสุทธิ']) * 100).clip(upper=100.0).round(2).fillna(0)
