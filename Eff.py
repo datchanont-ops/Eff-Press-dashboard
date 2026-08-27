@@ -480,7 +480,8 @@ else:
         part_summary = df.groupby('Part').agg({'actual_qty': 'sum', 'เป้าหมายที่ปรับแล้ว': 'sum'}).reset_index()
         part_summary = part_summary[part_summary['เป้าหมายที่ปรับแล้ว'] > 0] # ซ่อนตัวที่มีเป้าเป็น 0
         part_summary['% Achieve'] = (part_summary['actual_qty'] / part_summary['เป้าหมายที่ปรับแล้ว'] * 100).fillna(0).round(2)
-        
+        part_summary['% Achieve'] = part_summary['% Achieve'].clip(upper=100.0)
+
         top5_best = part_summary.sort_values(by='% Achieve', ascending=False).head(5)
         top5_worst = part_summary.sort_values(by='% Achieve', ascending=True).head(5)
         
