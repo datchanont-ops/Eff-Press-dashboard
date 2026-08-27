@@ -72,7 +72,7 @@ st.markdown("""
         padding: 1.2rem 1.5rem;
         border-radius: 0.75rem;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-        border-left: 5px solid #1e293b; /* ค่าเริ่มต้นสีดำหรู */
+        border-left: 5px solid #1e293b; 
         transition: transform 0.2s ease;
     }
     div[data-testid="metric-container"]:hover {
@@ -80,14 +80,12 @@ st.markdown("""
         box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
     }
     
-    /* ให้การ์ดแต่ละใบมีสีเส้นขอบซ้ายต่างกัน */
-    div[data-testid="column"]:nth-child(1) div[data-testid="metric-container"] { border-left-color: #3b82f6; } /* Blue */
-    div[data-testid="column"]:nth-child(2) div[data-testid="metric-container"] { border-left-color: #8b5cf6; } /* Purple */
-    div[data-testid="column"]:nth-child(3) div[data-testid="metric-container"] { border-left-color: #10b981; } /* Emerald */
-    div[data-testid="column"]:nth-child(4) div[data-testid="metric-container"] { border-left-color: #f59e0b; } /* Amber */
-    div[data-testid="column"]:nth-child(5) div[data-testid="metric-container"] { border-left-color: #64748b; } /* Slate */
+    div[data-testid="column"]:nth-child(1) div[data-testid="metric-container"] { border-left-color: #3b82f6; } 
+    div[data-testid="column"]:nth-child(2) div[data-testid="metric-container"] { border-left-color: #8b5cf6; } 
+    div[data-testid="column"]:nth-child(3) div[data-testid="metric-container"] { border-left-color: #10b981; } 
+    div[data-testid="column"]:nth-child(4) div[data-testid="metric-container"] { border-left-color: #f59e0b; } 
+    div[data-testid="column"]:nth-child(5) div[data-testid="metric-container"] { border-left-color: #64748b; } 
 
-    /* ปรับขนาดตัวอักษรใน KPI */
     div[data-testid="metric-container"] > div {
         color: #64748b;
         font-weight: 600;
@@ -99,18 +97,12 @@ st.markdown("""
         font-weight: 700;
     }
 
-    /* ซ่อนแถบตอนปริ้นท์ */
     @media print {
         .stPopover, .stExpander, .stDownloadButton, header, [data-testid="stSidebar"] { display: none !important; }
         .block-container { max-width: 100% !important; padding: 0 !important; }
     }
     
-    /* หัวข้อ Section */
-    h1, h2, h3 {
-        color: #0f172a;
-        font-weight: 700;
-    }
-    
+    h1, h2, h3 { color: #0f172a; font-weight: 700; }
     hr { margin-top: 1.5rem; margin-bottom: 1.5rem; border-color: #e2e8f0; }
 </style>
 """, unsafe_allow_html=True)
@@ -223,13 +215,14 @@ setup_deduct = setup_hours / 24.0
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🛠️ 3. ปรับกะการทำงาน (Shift)")
-shift_map = {"3 กะ (100%)": 1.0, "2 กะ (67%)": 0.67, "1.5 กะ (50%)": 0.5}
+# เปลี่ยนชื่อคีย์ให้ตรงกับแบบเดิมที่เซฟไว้ใน eff_settings.json เพื่อแก้ KeyError
+shift_map = {"3 กะ (เป้า 100%)": 1.0, "2 กะ (เป้า 67%)": 0.67, "1.5 กะ (เป้า 50%)": 0.5}
 
 # 3.1 Date
 with st.sidebar.expander("📅 ปรับตามวัน (By Date)", expanded=False):
     sd_val = st.selectbox("เปลี่ยนทุกวัน:", ["(ใช้ค่าเดิม)"] + list(shift_map.keys()), key='def_d')
     u_dates = sorted(df['วันที่ผลิต'].unique())
-    s_d_data = [sd_val]*len(u_dates) if sd_val != "(ใช้ค่าเดิม)" else [saved_settings.get('shift_date', {}).get(str(d), "3 กะ (100%)") for d in u_dates]
+    s_d_data = [sd_val]*len(u_dates) if sd_val != "(ใช้ค่าเดิม)" else [saved_settings.get('shift_date', {}).get(str(d), "3 กะ (เป้า 100%)") for d in u_dates]
     df_sd = st.data_editor(pd.DataFrame({'Date': u_dates, 'Shift': s_d_data}), hide_index=True, use_container_width=True)
     df['mult_D'] = df['วันที่ผลิต'].map({row['Date']: shift_map[row['Shift']] for _, row in df_sd.iterrows()})
 
@@ -237,7 +230,7 @@ with st.sidebar.expander("📅 ปรับตามวัน (By Date)", expand
 with st.sidebar.expander("🚜 ปรับตามเครื่อง (By Machine)", expanded=False):
     sm_val = st.selectbox("เปลี่ยนทุกเครื่อง:", ["(ใช้ค่าเดิม)"] + list(shift_map.keys()), key='def_m')
     u_macs = sorted(df['Machine'].unique())
-    s_m_data = [sm_val]*len(u_macs) if sm_val != "(ใช้ค่าเดิม)" else [saved_settings.get('shift_mac', {}).get(m, "3 กะ (100%)") for m in u_macs]
+    s_m_data = [sm_val]*len(u_macs) if sm_val != "(ใช้ค่าเดิม)" else [saved_settings.get('shift_mac', {}).get(m, "3 กะ (เป้า 100%)") for m in u_macs]
     df_sm = st.data_editor(pd.DataFrame({'Machine': u_macs, 'Shift': s_m_data}), hide_index=True, use_container_width=True)
     df['mult_M'] = df['Machine'].map({row['Machine']: shift_map[row['Shift']] for _, row in df_sm.iterrows()})
 
