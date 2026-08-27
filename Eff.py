@@ -173,12 +173,12 @@ df, error = load_daily_data(data_source, df_target)
 if error: st.error(error); st.stop()
 
 # ==========================================
-# 🔍 2. ตัวกรองวันที่ (Date Filter)
+# 🔍 2. ตัวกรองวันที่ และ Trial (Filter)
 # ==========================================
 min_date, max_date = df['วันที่ผลิต'].min(), df['วันที่ผลิต'].max()
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔍 2. ตัวกรองวันที่ (Filter)")
+st.sidebar.markdown("### 🔍 2. ตัวกรองข้อมูล (Filter)")
 date_range = st.sidebar.date_input("📅 เลือกช่วงวันที่แสดงผล", value=(min_date, max_date), min_value=min_date, max_value=max_date)
 
 if isinstance(date_range, tuple) and len(date_range) == 2:
@@ -190,7 +190,34 @@ elif isinstance(date_range, tuple) and len(date_range) == 1:
 else:
     s_date, e_date = min_date, max_date
 
+# --- กรองงาน Trial (เปลี่ยนเป็น Checkbox) ---
+st.sidebar.markdown("🧪 **การกรองงานทดลองผลิต (Trial)**")
+cut_trial_data = st.sidebar.checkbox("☑️ ตัดงานที่ผลิตแค่ 1-2 วัน (งาน Trial) ออก", value=False)
+
+part_day_counts = df.groupby('Part')['วันที่ผลิต'].nunique().to_dict()
+df['จำนวนวันผลิตของPart'] = df['Part'].map(part_day_counts)
+
+if cut_trial_data:
+    removed_parts = df[df['จำนวนวันผลิตของPart'] <= 2]['Part'].unique()
+    df = df[df['จำนวนวันผลิตของPart'] > 2]
+    st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= 2 วัน):** ระบบได้ทำการตัดออกทั้งหมด `{len(removed_parts)}` Part")
+
+# --- โชว์แถบสถานะวันที่ในจอหลัก ---
 st.info(f"📅 **ข้อมูลกำลังแสดงผลช่วงวันที่:** `{s_date.strftime('%d/%m/%Y')}` ถึง `{e_date.strftime('%d/%m/%Y')}`")
+
+machine_groups = ['INJ', 'INM', '510', 'VAC', '400T', '300T', '350T', 'PRESS']
+selected_groups = st.sidebar.multiselect("⚙️ เลือกกลุ่มเครื่องจักร", options=machine_groups, default=[])
+if selected_groups:
+    pattern = '|'.join(selected_groups)
+    df = df[df['Machine'].str.contains(pattern, case=False, na=False)]
+
+selected_machines = st.sidebar.multiselect("🚜 ระบุรายเครื่อง", options=sorted(df['Machine'].unique()), default=[])
+if selected_machines:
+    df = df[df['Machine'].isin(selected_machines)]
+
+selected_parts = st.sidebar.multiselect("📦 เลือกชิ้นงาน (Part)", options=sorted(df['Part'].unique()), default=[])
+if selected_parts:
+    df = df[df['Part'].isin(selected_parts)]
 
 # --- โหลด Settings ---
 saved_settings = {}
