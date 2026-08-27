@@ -343,6 +343,33 @@ else:
                 df.loc[mask, 'ตัวคูณกะสุทธิ'] = spec_mult
             except Exception: pass
 
+    # ==========================================
+    # --- 📌 สรุปรายการที่ตั้งค่าปรับลดกะ (< 3 กะ) ---
+    # ==========================================
+    adjusted_dates = edited_shift_date_df[edited_shift_date_df['กะการทำงาน'] != "3 กะ (เป้า 100%)"]
+    adjusted_macs = edited_shift_machine_df[edited_shift_machine_df['กะการทำงาน'] != "3 กะ (เป้า 100%)"]
+    
+    if not edited_spec_df.empty:
+        adjusted_specs = edited_spec_df[edited_spec_df['กะการทำงาน'] != "3 กะ (เป้า 100%)"].dropna()
+    else:
+        adjusted_specs = pd.DataFrame()
+    
+    if not adjusted_dates.empty or not adjusted_macs.empty or not adjusted_specs.empty:
+        alert_text = "**⚠️ สรุปรายการที่กำลังปรับลดกะ:**\n"
+        if not adjusted_dates.empty:
+            alert_text += "\n**📅 หมวดรายวัน:**\n"
+            for _, row in adjusted_dates.iterrows():
+                alert_text += f"- วันที่ {row['วันที่'].strftime('%d/%m/%Y')} ➔ {row['กะการทำงาน']}\n"
+        if not adjusted_macs.empty:
+            alert_text += "\n**🚜 หมวดรายเครื่องจักร:**\n"
+            for _, row in adjusted_macs.iterrows():
+                alert_text += f"- เครื่อง {row['Machine']} ➔ {row['กะการทำงาน']}\n"
+        if not adjusted_specs.empty:
+            alert_text += "\n**🎯 หมวดเฉพาะกิจ (เครื่อง+วัน):**\n"
+            for _, row in adjusted_specs.iterrows():
+                alert_text += f"- {row['วันที่'].strftime('%d/%m/%Y')} | {row['เครื่องจักร']} ➔ {row['กะการทำงาน']}\n"
+        st.sidebar.warning(alert_text)
+
     # --- คำนวณเป้าหมายที่ปรับแล้ว ---
     reverse_shift_mapping = {1.0: "3 กะ", 0.67: "2 กะ", 0.5: "1.5 กะ"}
     df['จำนวนกะ'] = df['ตัวคูณกะสุทธิ'].map(reverse_shift_mapping)
@@ -381,8 +408,11 @@ else:
     elif trial_option == "กำหนดจำนวนวันเอง (Custom)": cut_days = st.sidebar.number_input("ตัด Part (วัน):", min_value=1, max_value=30, value=2, step=1)
 
     if cut_days > 0:
+        removed_parts = df[df['จำนวนวันผลิตของPart'] <= cut_days]['Part'].unique()
         df = df[df['จำนวนวันผลิตของPart'] > cut_days]
+        st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= {cut_days} วัน):** ตัดออกทั้งหมด `{len(removed_parts)}` Part")
 
+    st.sidebar.markdown("⚙️ **ตัวกรองเครื่องจักร**")
     machine_groups = ['INJ', 'INM', '510', 'VAC', '400T', '300T', '350T', 'PRESS']
     selected_groups = st.sidebar.multiselect("1. เลือกกลุ่มเครื่องจักร (Machine Group)", options=machine_groups, default=[])
     if selected_groups:
@@ -438,7 +468,6 @@ else:
     with col_group:
         st.subheader("📊 ประสิทธิภาพแยกตามกลุ่มเครื่องจักร")
         
-        # ฟังก์ชันดึงชื่อกลุ่มจากชื่อเครื่อง
         def extract_group(mc):
             mc_upper = str(mc).upper()
             groups = ['INJ', 'INM', '510', 'VAC', '400T', '300T', '350T', 'PRESS']
@@ -451,7 +480,6 @@ else:
         group_summary['% Achieve'] = (group_summary['actual_qty'] / group_summary['เป้าหมายที่ปรับแล้ว'] * 100).fillna(0).round(2)
         group_summary['% Achieve'] = group_summary['% Achieve'].clip(upper=100.0)
         
-        # จัดเรียงลำดับความสำคัญตามที่คุณต้องการ: INJ -> PRESS -> VACUUM[cite: 1]
         def get_group_priority(g):
             g_up = str(g).upper()
             if "INJ" in g_up: return 1
@@ -474,18 +502,19 @@ else:
         st.plotly_chart(fig_grp, use_container_width=True)
 
     with col_top:
-        st.subheader("🏆 Top 5 ชิ้นงาน (Part) ดีที่สุด & ต่ำที่สุด")
+        st.subheader("🏆 Top 5 ชิ้นงาน (Part) ดีที่สุด & แย่ที่สุด")
         
-        # จัดกลุ่มประสิทธิภาพตามชื่อ Part
         part_summary = df.groupby('Part').agg({'actual_qty': 'sum', 'เป้าหมายที่ปรับแล้ว': 'sum'}).reset_index()
-        part_summary = part_summary[part_summary['เป้าหมายที่ปรับแล้ว'] > 0] # ซ่อนตัวที่มีเป้าเป็น 0
+        part_summary = part_summary[part_summary['เป้าหมายที่ปรับแล้ว'] > 0]
+        
+        # 📌 ล็อกเพดานประสิทธิภาพในตาราง Top 5 ไม่ให้เกิน 100%
         part_summary['% Achieve'] = (part_summary['actual_qty'] / part_summary['เป้าหมายที่ปรับแล้ว'] * 100).fillna(0).round(2)
         part_summary['% Achieve'] = part_summary['% Achieve'].clip(upper=100.0)
-
+        
         top5_best = part_summary.sort_values(by='% Achieve', ascending=False).head(5)
         top5_worst = part_summary.sort_values(by='% Achieve', ascending=True).head(5)
         
-        tab_best, tab_worst = st.tabs(["🟢 5 อันดับประสิทธิภาพดี", "🔴 5 อันดับประสิทธิภาพต่ำ"])
+        tab_best, tab_worst = st.tabs(["🟢 5 อันดับประสิทธิภาพดีเยี่ยม", "🔴 5 อันดับประสิทธิภาพต่ำ"])
         
         with tab_best:
             st.dataframe(
