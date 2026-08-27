@@ -190,17 +190,28 @@ elif isinstance(date_range, tuple) and len(date_range) == 1:
 else:
     s_date, e_date = min_date, max_date
 
-# --- กรองงาน Trial (เปลี่ยนเป็น Checkbox) ---
+# --- กรองงาน Trial (แบบ Selectbox) ---
 st.sidebar.markdown("🧪 **การกรองงานทดลองผลิต (Trial)**")
-cut_trial_data = st.sidebar.checkbox("☑️ ตัดงานที่ผลิตแค่ 1-2 วัน (งาน Trial) ออก", value=False)
+trial_options = [
+    "แสดงทั้งหมด (ไม่ตัด)",
+    "ตัด Part ที่ผลิต 1 วัน",
+    "ตัด Part ที่ผลิต 1-2 วัน",
+    "ตัด Part ที่ผลิตไม่เกิน 3 วัน"
+]
+trial_choice = st.sidebar.selectbox("เลือกเงื่อนไขการตัดงาน:", trial_options, index=0)
 
 part_day_counts = df.groupby('Part')['วันที่ผลิต'].nunique().to_dict()
 df['จำนวนวันผลิตของPart'] = df['Part'].map(part_day_counts)
 
-if cut_trial_data:
-    removed_parts = df[df['จำนวนวันผลิตของPart'] <= 2]['Part'].unique()
-    df = df[df['จำนวนวันผลิตของPart'] > 2]
-    st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= 2 วัน):** ระบบได้ทำการตัดออกทั้งหมด `{len(removed_parts)}` Part")
+cut_days = 0
+if trial_choice == "ตัด Part ที่ผลิต 1 วัน": cut_days = 1
+elif trial_choice == "ตัด Part ที่ผลิต 1-2 วัน": cut_days = 2
+elif trial_choice == "ตัด Part ที่ผลิตไม่เกิน 3 วัน": cut_days = 3
+
+if cut_days > 0:
+    removed_parts = df[df['จำนวนวันผลิตของPart'] <= cut_days]['Part'].unique()
+    df = df[df['จำนวนวันผลิตของPart'] > cut_days]
+    st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= {cut_days} วัน):** ระบบได้ทำการตัดออกทั้งหมด `{len(removed_parts)}` Part")
 
 # --- โชว์แถบสถานะวันที่ในจอหลัก ---
 st.info(f"📅 **ข้อมูลกำลังแสดงผลช่วงวันที่:** `{s_date.strftime('%d/%m/%Y')}` ถึง `{e_date.strftime('%d/%m/%Y')}`")
