@@ -474,7 +474,7 @@ else:
         st.plotly_chart(fig_grp, use_container_width=True)
 
     with col_top:
-        st.subheader("🏆 Top 5 ชิ้นงาน (Part) ดีที่สุด & แย่ที่สุด")
+        st.subheader("🏆 Top 5 ชิ้นงาน (Part) ดีที่สุด & ต่ำที่สุด")
         
         # จัดกลุ่มประสิทธิภาพตามชื่อ Part
         part_summary = df.groupby('Part').agg({'actual_qty': 'sum', 'เป้าหมายที่ปรับแล้ว': 'sum'}).reset_index()
@@ -484,7 +484,7 @@ else:
         top5_best = part_summary.sort_values(by='% Achieve', ascending=False).head(5)
         top5_worst = part_summary.sort_values(by='% Achieve', ascending=True).head(5)
         
-        tab_best, tab_worst = st.tabs(["🟢 5 อันดับประสิทธิภาพดีเยี่ยม", "🔴 5 อันดับประสิทธิภาพต่ำ"])
+        tab_best, tab_worst = st.tabs(["🟢 5 อันดับประสิทธิภาพดี", "🔴 5 อันดับประสิทธิภาพต่ำ"])
         
         with tab_best:
             st.dataframe(
