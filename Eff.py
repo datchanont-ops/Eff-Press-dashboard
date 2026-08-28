@@ -72,7 +72,6 @@ st.markdown("""
     div[data-testid="column"]:nth-child(2) div[data-testid="metric-container"] { border-left-color: #8b5cf6; } 
     div[data-testid="column"]:nth-child(3) div[data-testid="metric-container"] { border-left-color: #10b981; } 
     div[data-testid="column"]:nth-child(4) div[data-testid="metric-container"] { border-left-color: #f59e0b; } 
-    div[data-testid="column"]:nth-child(5) div[data-testid="metric-container"] { border-left-color: #ef4444; } 
 
     div[data-testid="metric-container"] > div { color: #64748b; font-weight: 600; font-size: 0.95rem; }
     div[data-testid="metric-container"] label { font-size: 1.6rem !important; color: #0f172a; font-weight: 700; }
@@ -129,7 +128,7 @@ def load_daily_data(file, df_target):
 # --- Header / Title ---
 # ==========================================
 st.markdown("<h1>📊 Production Executive Dashboard</h1>", unsafe_allow_html=True)
-st.markdown("<p style='color: #64748b; font-size: 1.1rem; margin-top: -10px;'>ระบบวิเคราะห์ประสิทธิภาพการผลิต (Efficiency) และอัตราการใช้เครื่องจักร (Utilization)</p>", unsafe_allow_html=True)
+st.markdown("<p style='color: #64748b; font-size: 1.1rem; margin-top: -10px;'>ระบบวิเคราะห์ประสิทธิภาพการผลิต (Efficiency) และเวลาชั่วโมงผลงาน (Earned Hours)</p>", unsafe_allow_html=True)
 
 df_target, target_error = load_target_data()
 if target_error: st.error(target_error); st.stop()
@@ -317,13 +316,13 @@ if not df_spec.empty:
 df['เป้าหมายสุทธิ'] = ((df['เป้าต่อวัน(3กะ)'] * df['mult_Net'] * oee_mult) - ((df['เป้าต่อวัน(3กะ)'] * setup_deduct) * df['Setup_Count'])).clip(lower=0)
 df['% Achieve'] = ((df['actual_qty'] / df['เป้าหมายสุทธิ']) * 100).clip(upper=100.0).round(2).fillna(0)
 
-# 2. คำนวณ Earned Hours สำหรับวัด Machine Utilization (เทียบเวลาที่เปิดเครื่อง 21 ชม.)
+# 2. คำนวณ Earned Hours สำหรับวัดเวลาที่ได้งานจริง
 df['Earned_Hours'] = 0.0
 mask_tgt = df['เป้าต่อวัน(3กะ)'] > 0
 df.loc[mask_tgt, 'Earned_Hours'] = (df.loc[mask_tgt, 'actual_qty'] / df.loc[mask_tgt, 'เป้าต่อวัน(3กะ)']) * work_hours
 
 # ==========================================
-# 📊 Section 1: KPI Metrics (Efficiency vs Utilization)
+# 📊 Section 1: KPI Metrics
 # ==========================================
 st.markdown("### 📈 1. สรุปประสิทธิภาพการผลิต (Production Efficiency)")
 total_act = df['actual_qty'].sum()
@@ -336,25 +335,23 @@ col2.metric("🎯 เป้าสุทธิ (Net Target)", f"{total_tgt_net:,.
 col3.metric("📈 ประสิทธิภาพรวม (Achieve)", f"{overall_eff:.1f}%", "เทียบเป้าหมายสุทธิ")
 col4.metric("⚙️ O.E.E. Baseline", f"{oee_val}%", "ตั้งค่าระบบ")
 
-st.markdown("### ⚡ 2. สรุปอัตราการใช้เครื่องจักร (Machine Utilization)")
+st.markdown("### ⚡ 2. สรุปชั่วโมงการทำงาน (Earned Hours Analysis)")
 # คำนวณเวลาที่เครื่องพร้อมใช้งาน (นับรายเครื่องรายวัน)
 mach_daily = df.groupby(['วันที่ผลิต', 'Machine']).agg({'mult_Net': 'max'}).reset_index()
 total_avail_hours = (mach_daily['mult_Net'] * work_hours).sum()
 total_earned_hours = df['Earned_Hours'].sum()
-overall_util = (total_earned_hours / total_avail_hours * 100) if total_avail_hours > 0 else 0
 
-u_col1, u_col2, u_col3, u_col4 = st.columns(4)
+u_col1, u_col2, u_col3 = st.columns(3)
 u_col1.metric("⏱️ ชั่วโมงที่ได้ผลงานจริง", f"{total_earned_hours:,.1f}", "Earned Hours")
-u_col2.metric("🕒 ชั่วโมงพร้อมใช้งานสุทธิ", f"{total_avail_hours:,.1f}", f"จากเครื่องที่เปิดใช้งานจริง")
-u_col3.metric("🔥 Machine Utilization", f"{overall_util:.1f}%", "อัตราใช้เครื่องจักร (%)")
-u_col4.metric("🗓️ ฐานคำนวณรายวัน", f"{work_hours} ชม./วัน", f"ปฏิทิน: {work_days} วัน/เดือน")
+u_col2.metric("🕒 ชั่วโมงพร้อมใช้งานสุทธิ", f"{total_avail_hours:,.1f}", "Available Hours")
+u_col3.metric("🗓️ ฐานคำนวณรายวัน", f"{work_hours} ชม./วัน", f"ปฏิทิน: {work_days} วัน/เดือน")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
 # ==========================================
-# 📈 Section 2: Charts (Trend & Utilization)
+# 📈 Section 2: Charts (Trend & Earned Hours)
 # ==========================================
-col_trend, col_util = st.columns([1.5, 1])
+col_trend, col_eh = st.columns([1.5, 1])
 
 with col_trend:
     st.markdown("#### 📉 แนวโน้มยอดผลิตเทียบเป้าหมาย (Daily Trend)")
@@ -371,21 +368,38 @@ with col_trend:
     fig_trend.update_yaxes(title_text="Achievement (%)", showgrid=False, range=[0, 115], secondary_y=True)
     st.plotly_chart(fig_trend, use_container_width=True)
 
-with col_util:
-    st.markdown("#### 🚜 Machine Utilization (รายเครื่องจักร)")
-    # หา Util รายเครื่อง
+with col_eh:
+    st.markdown("#### ⏱️ Earned vs Available Hours (รายเครื่อง)")
+    # หา ชั่วโมงผลงาน เทียบกับ ชั่วโมงใช้งาน รายเครื่อง
     util_mach = df.groupby('Machine').agg({'Earned_Hours': 'sum'}).reset_index()
     avail_mach = mach_daily.groupby('Machine').agg(Avail_Net=('mult_Net', 'sum')).reset_index()
     avail_mach['Avail_Hours'] = avail_mach['Avail_Net'] * work_hours
     util_mach = pd.merge(util_mach, avail_mach, on='Machine')
-    util_mach['Util (%)'] = (util_mach['Earned_Hours'] / util_mach['Avail_Hours'] * 100).clip(upper=100).fillna(0)
     
-    # ดึง Top 10 มาแสดง
-    util_mach = util_mach.sort_values(by='Util (%)', ascending=False).head(10)
-    fig_util = px.bar(util_mach, x='Util (%)', y='Machine', orientation='h', text=util_mach['Util (%)'].apply(lambda x: f"{x:.1f}%"), color='Util (%)', color_continuous_scale=['#f43f5e', '#f59e0b', '#10b981'])
-    fig_util.update_traces(textposition='outside')
-    fig_util.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(t=10, b=0, l=0, r=0), xaxis_range=[0, 115], coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'})
-    st.plotly_chart(fig_util, use_container_width=True)
+    # ดึง Top 10 เครื่องที่มี Available Hours สูงสุดมาแสดง (เพื่อไม่ให้กราฟแน่นเกินไป)
+    util_mach = util_mach.sort_values(by='Earned_Hours', ascending=True).tail(10)
+    
+    fig_eh = go.Figure()
+    # แถบสีเทาด้านหลัง: ชั่วโมงที่พร้อมใช้งาน (Available Hours)
+    fig_eh.add_trace(go.Bar(
+        y=util_mach['Machine'], x=util_mach['Avail_Hours'],
+        name='Available Hrs', orientation='h', marker_color='#e2e8f0',
+        hoverinfo='x+name'
+    ))
+    # แถบสีฟ้าด้านหน้า: ชั่วโมงที่ทำผลงานได้จริง (Earned Hours)
+    fig_eh.add_trace(go.Bar(
+        y=util_mach['Machine'], x=util_mach['Earned_Hours'],
+        name='Earned Hrs', orientation='h', marker_color='#3b82f6',
+        text=util_mach['Earned_Hours'].apply(lambda x: f"{x:.1f}h"), textposition='auto'
+    ))
+    
+    # ใช้ barmode='overlay' เพื่อให้แทบสีฟ้าซ้อนทับอยู่บนแทบสีเทา
+    fig_eh.update_layout(
+        barmode='overlay', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', 
+        margin=dict(t=10, b=0, l=0, r=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_eh, use_container_width=True)
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
