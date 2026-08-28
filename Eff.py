@@ -67,14 +67,15 @@ st.markdown("""
     }
     div[data-testid="metric-container"]:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
     
+    /* สีของ Card แต่ละใบ */
     div[data-testid="column"]:nth-child(1) div[data-testid="metric-container"] { border-left-color: #3b82f6; } 
     div[data-testid="column"]:nth-child(2) div[data-testid="metric-container"] { border-left-color: #8b5cf6; } 
     div[data-testid="column"]:nth-child(3) div[data-testid="metric-container"] { border-left-color: #10b981; } 
     div[data-testid="column"]:nth-child(4) div[data-testid="metric-container"] { border-left-color: #f59e0b; } 
-    div[data-testid="column"]:nth-child(5) div[data-testid="metric-container"] { border-left-color: #64748b; } 
+    div[data-testid="column"]:nth-child(5) div[data-testid="metric-container"] { border-left-color: #ef4444; } 
 
     div[data-testid="metric-container"] > div { color: #64748b; font-weight: 600; font-size: 0.95rem; }
-    div[data-testid="metric-container"] label { font-size: 1.8rem !important; color: #0f172a; font-weight: 700; }
+    div[data-testid="metric-container"] label { font-size: 1.6rem !important; color: #0f172a; font-weight: 700; }
 
     @media print {
         .stPopover, .stExpander, .stDownloadButton, header, [data-testid="stSidebar"] { display: none !important; }
@@ -128,7 +129,7 @@ def load_daily_data(file, df_target):
 # --- Header / Title ---
 # ==========================================
 st.markdown("<h1>📊 Production Executive Dashboard</h1>", unsafe_allow_html=True)
-st.markdown("<p style='color: #64748b; font-size: 1.1rem; margin-top: -10px;'>ระบบวิเคราะห์และติดตามประสิทธิภาพการผลิตประจำวัน (Daily Efficiency Tracking)</p>", unsafe_allow_html=True)
+st.markdown("<p style='color: #64748b; font-size: 1.1rem; margin-top: -10px;'>ระบบวิเคราะห์ประสิทธิภาพการผลิต (Efficiency) และอัตราการใช้เครื่องจักร (Utilization)</p>", unsafe_allow_html=True)
 
 df_target, target_error = load_target_data()
 if target_error: st.error(target_error); st.stop()
@@ -147,7 +148,6 @@ with st.sidebar:
             
     uploaded_file = st.file_uploader("📂 อัปโหลดไฟล์รายวัน (Excel)", type=["xlsx", "xls"], label_visibility="collapsed")
 
-# --- ระบบซิงค์ข้อมูล Local/GitHub ---
 default_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'default_data.xlsx')
 settings_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'eff_settings.json')
 
@@ -190,14 +190,8 @@ elif isinstance(date_range, tuple) and len(date_range) == 1:
 else:
     s_date, e_date = min_date, max_date
 
-# --- กรองงาน Trial (แบบ Selectbox) ---
 st.sidebar.markdown("🧪 **การกรองงานทดลองผลิต (Trial)**")
-trial_options = [
-    "แสดงทั้งหมด (ไม่ตัด)",
-    "ตัด Part ที่ผลิต 1 วัน",
-    "ตัด Part ที่ผลิต 1-2 วัน",
-    "ตัด Part ที่ผลิตไม่เกิน 3 วัน"
-]
+trial_options = ["แสดงทั้งหมด (ไม่ตัด)", "ตัด Part ที่ผลิต 1 วัน", "ตัด Part ที่ผลิต 1-2 วัน", "ตัด Part ที่ผลิตไม่เกิน 3 วัน"]
 trial_choice = st.sidebar.selectbox("เลือกเงื่อนไขการตัดงาน:", trial_options, index=0)
 
 part_day_counts = df.groupby('Part')['วันที่ผลิต'].nunique().to_dict()
@@ -211,9 +205,8 @@ elif trial_choice == "ตัด Part ที่ผลิตไม่เกิน 
 if cut_days > 0:
     removed_parts = df[df['จำนวนวันผลิตของPart'] <= cut_days]['Part'].unique()
     df = df[df['จำนวนวันผลิตของPart'] > cut_days]
-    st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= {cut_days} วัน):** ระบบได้ทำการตัดออกทั้งหมด `{len(removed_parts)}` Part")
+    st.info(f"🧪 **เปิดใช้งานการตัดงานทดลองผลิต (<= {cut_days} วัน):** ตัดออกทั้งหมด `{len(removed_parts)}` Part")
 
-# --- โชว์แถบสถานะวันที่ในจอหลัก ---
 st.info(f"📅 **ข้อมูลกำลังแสดงผลช่วงวันที่:** `{s_date.strftime('%d/%m/%Y')}` ถึง `{e_date.strftime('%d/%m/%Y')}`")
 
 machine_groups = ['INJ', 'INM', '510', 'VAC', '400T', '300T', '350T', 'PRESS']
@@ -223,12 +216,10 @@ if selected_groups:
     df = df[df['Machine'].str.contains(pattern, case=False, na=False)]
 
 selected_machines = st.sidebar.multiselect("🚜 ระบุรายเครื่อง", options=sorted(df['Machine'].unique()), default=[])
-if selected_machines:
-    df = df[df['Machine'].isin(selected_machines)]
+if selected_machines: df = df[df['Machine'].isin(selected_machines)]
 
 selected_parts = st.sidebar.multiselect("📦 เลือกชิ้นงาน (Part)", options=sorted(df['Part'].unique()), default=[])
-if selected_parts:
-    df = df[df['Part'].isin(selected_parts)]
+if selected_parts: df = df[df['Part'].isin(selected_parts)]
 
 # --- โหลด Settings ---
 saved_settings = {}
@@ -241,9 +232,16 @@ st.sidebar.markdown("### ⚙️ 3. ตั้งค่าพารามิเต
 
 init_oee = int(saved_settings.get('oee_val', 90))
 init_setup = float(saved_settings.get('setup_hours', 4.0))
+init_work_hours = float(saved_settings.get('work_hours', 21.0))
+init_work_days = int(saved_settings.get('work_days', 25))
 
 oee_val = st.sidebar.number_input("O.E.E. Target (%)", min_value=1, max_value=100, value=init_oee, step=1)
 setup_hours = st.sidebar.number_input("เวลา Setup (ชม./ครั้ง)", min_value=0.0, max_value=24.0, value=init_setup, step=0.5)
+
+st.sidebar.markdown("⏱️ **พารามิเตอร์เวลาทำงาน**")
+work_hours = st.sidebar.number_input("ชั่วโมงทำงานจริง/วัน (ชม.)", min_value=1.0, max_value=24.0, value=init_work_hours, step=0.5)
+work_days = st.sidebar.number_input("วันทำงานตามปฏิทิน/เดือน (วัน)", min_value=1, max_value=31, value=init_work_days, step=1)
+
 oee_mult = oee_val / 100.0
 setup_deduct = setup_hours / 24.0
 
@@ -251,7 +249,6 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### 🛠️ 4. ปรับกะการทำงาน (Shift)")
 shift_map = {"3 กะ (เป้า 100%)": 1.0, "2 กะ (เป้า 67%)": 0.67, "1.5 กะ (เป้า 50%)": 0.5}
 
-# 📌 ฟังก์ชันดักจับแก้ชื่อกะที่เซฟมาผิด/เซฟชื่อแบบสั้น
 def get_valid_shift(val):
     val = str(val)
     if val in shift_map: return val
@@ -279,13 +276,11 @@ with st.sidebar.expander("🚜 ปรับตามเครื่อง (By Ma
 with st.sidebar.expander("🎯 ปรับเฉพาะกิจ (Date+Machine)", expanded=False):
     saved_spec = saved_settings.get('shift_spec', [])
     df_sp = pd.DataFrame(saved_spec) if saved_spec else pd.DataFrame(columns=["Date", "Machine", "Shift"])
-    if not df_sp.empty and 'Shift' in df_sp.columns:
-        df_sp['Shift'] = df_sp['Shift'].apply(get_valid_shift)
-    if not df_sp.empty and 'Date' in df_sp.columns: 
-        df_sp['Date'] = pd.to_datetime(df_sp['Date']).dt.date
+    if not df_sp.empty and 'Shift' in df_sp.columns: df_sp['Shift'] = df_sp['Shift'].apply(get_valid_shift)
+    if not df_sp.empty and 'Date' in df_sp.columns: df_sp['Date'] = pd.to_datetime(df_sp['Date']).dt.date
     df_spec = st.data_editor(df_sp, num_rows="dynamic", column_config={"Date": st.column_config.DateColumn(format="DD/MM/YYYY"), "Shift": st.column_config.SelectboxColumn(options=list(shift_map.keys()))}, hide_index=True, use_container_width=True)
 
-# --- 📌 กล่องแจ้งเตือน (สรุปรายการปรับลดกะ) ---
+# แจ้งเตือนปรับลดกะ
 adj_d = df_sd[df_sd['Shift'] != "3 กะ (เป้า 100%)"]
 adj_m = df_sm[df_sm['Shift'] != "3 กะ (เป้า 100%)"]
 adj_s = df_spec[df_spec['Shift'] != "3 กะ (เป้า 100%)"].dropna() if not df_spec.empty else pd.DataFrame()
@@ -302,7 +297,7 @@ if not adj_d.empty or not adj_m.empty or not adj_s.empty:
 
 if st.sidebar.button("💾 บันทึกการตั้งค่าทั้งหมด", use_container_width=True):
     to_save = {
-        'oee_val': oee_val, 'setup_hours': setup_hours,
+        'oee_val': oee_val, 'setup_hours': setup_hours, 'work_hours': work_hours, 'work_days': work_days,
         'shift_date': {str(r['Date']): r['Shift'] for _, r in df_sd.iterrows()},
         'shift_mac': {r['Machine']: r['Shift'] for _, r in df_sm.iterrows()},
         'shift_spec': [{'Date': str(r['Date']), 'Machine': r['Machine'], 'Shift': r['Shift']} for _, r in df_spec.dropna().iterrows()] if not df_spec.empty else []
@@ -312,60 +307,85 @@ if st.sidebar.button("💾 บันทึกการตั้งค่าท�
     if GITHUB_ENABLED: gh_put_file(f"{GITHUB_DATA_DIR}/eff_settings.json", j_str.encode('utf-8'), "Save settings")
     st.sidebar.success("✅ บันทึกตั้งค่าแล้ว!")
 
-# --- คำนวณ % Achieve สุทธิ ---
+# --- คำนวณ % Achieve และ Utilization ---
 df['mult_Net'] = df[['mult_D', 'mult_M']].min(axis=1)
 if not df_spec.empty:
     for _, r in df_spec.dropna().iterrows():
         df.loc[(df['วันที่ผลิต'] == r['Date']) & (df['Machine'] == r['Machine']), 'mult_Net'] = shift_map.get(r['Shift'], 1.0)
 
+# 1. คำนวณเป้าหมายสำหรับวัด Efficiency (ต้องหัก Setup และคูณ OEE)
 df['เป้าหมายสุทธิ'] = ((df['เป้าต่อวัน(3กะ)'] * df['mult_Net'] * oee_mult) - ((df['เป้าต่อวัน(3กะ)'] * setup_deduct) * df['Setup_Count'])).clip(lower=0)
 df['% Achieve'] = ((df['actual_qty'] / df['เป้าหมายสุทธิ']) * 100).clip(upper=100.0).round(2).fillna(0)
 
+# 2. คำนวณ Earned Hours สำหรับวัด Machine Utilization (เทียบเวลาที่เปิดเครื่อง 21 ชม.)
+df['Earned_Hours'] = 0.0
+mask_tgt = df['เป้าต่อวัน(3กะ)'] > 0
+df.loc[mask_tgt, 'Earned_Hours'] = (df.loc[mask_tgt, 'actual_qty'] / df.loc[mask_tgt, 'เป้าต่อวัน(3กะ)']) * work_hours
+
 # ==========================================
-# 📊 Section 1: Top KPI Metrics (Modern Style)
+# 📊 Section 1: KPI Metrics (Efficiency vs Utilization)
 # ==========================================
+st.markdown("### 📈 1. สรุปประสิทธิภาพการผลิต (Production Efficiency)")
 total_act = df['actual_qty'].sum()
-total_tgt_raw = df['เป้าต่อวัน(3กะ)'].sum()
 total_tgt_net = df['เป้าหมายสุทธิ'].sum()
 overall_eff = min((total_act / total_tgt_net * 100) if total_tgt_net > 0 else 0, 100.0)
 
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3, col4 = st.columns(4)
 col1.metric("📦 ยอดผลิตจริง (Actual)", f"{total_act:,.0f}", "Pcs")
-col2.metric("🎯 เป้าดิบ 3 กะ (Raw Target)", f"{total_tgt_raw:,.0f}", "Pcs")
-col3.metric("🎯 เป้าสุทธิ (Net Target)", f"{total_tgt_net:,.0f}", "หัก Setup/กะ/OEE")
-col4.metric("📈 ประสิทธิภาพรวม (Achieve)", f"{overall_eff:.1f}%", "Overall KPI")
-col5.metric("⚙️ O.E.E. Baseline", f"{oee_val}%", "ตั้งค่าระบบ")
+col2.metric("🎯 เป้าสุทธิ (Net Target)", f"{total_tgt_net:,.0f}", "Pcs (หัก Setup/กะ/OEE)")
+col3.metric("📈 ประสิทธิภาพรวม (Achieve)", f"{overall_eff:.1f}%", "เทียบเป้าหมายสุทธิ")
+col4.metric("⚙️ O.E.E. Baseline", f"{oee_val}%", "ตั้งค่าระบบ")
+
+st.markdown("### ⚡ 2. สรุปอัตราการใช้เครื่องจักร (Machine Utilization)")
+# คำนวณเวลาที่เครื่องพร้อมใช้งาน (นับรายเครื่องรายวัน)
+mach_daily = df.groupby(['วันที่ผลิต', 'Machine']).agg({'mult_Net': 'max'}).reset_index()
+total_avail_hours = (mach_daily['mult_Net'] * work_hours).sum()
+total_earned_hours = df['Earned_Hours'].sum()
+overall_util = (total_earned_hours / total_avail_hours * 100) if total_avail_hours > 0 else 0
+
+u_col1, u_col2, u_col3, u_col4 = st.columns(4)
+u_col1.metric("⏱️ ชั่วโมงที่ได้ผลงานจริง", f"{total_earned_hours:,.1f}", "Earned Hours")
+u_col2.metric("🕒 ชั่วโมงพร้อมใช้งานสุทธิ", f"{total_avail_hours:,.1f}", f"จากเครื่องที่เปิดใช้งานจริง")
+u_col3.metric("🔥 Machine Utilization", f"{overall_util:.1f}%", "อัตราใช้เครื่องจักร (%)")
+u_col4.metric("🗓️ ฐานคำนวณรายวัน", f"{work_hours} ชม./วัน", f"ปฏิทิน: {work_days} วัน/เดือน")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
 # ==========================================
-# 📈 Section 2: Main Trend Chart
+# 📈 Section 2: Charts (Trend & Utilization)
 # ==========================================
-st.markdown("### 📉 แนวโน้มยอดผลิตเทียบเป้าหมาย (Daily Trend Analysis)")
+col_trend, col_util = st.columns([1.5, 1])
 
-daily = df.groupby('วันที่ผลิต').agg({'actual_qty': 'sum', 'เป้าหมายสุทธิ': 'sum'}).reset_index()
-daily['% Achieve'] = ((daily['actual_qty'] / daily['เป้าหมายสุทธิ']) * 100).clip(upper=100.0).round(2).fillna(0)
+with col_trend:
+    st.markdown("#### 📉 แนวโน้มยอดผลิตเทียบเป้าหมาย (Daily Trend)")
+    daily = df.groupby('วันที่ผลิต').agg({'actual_qty': 'sum', 'เป้าหมายสุทธิ': 'sum'}).reset_index()
+    daily['% Achieve'] = ((daily['actual_qty'] / daily['เป้าหมายสุทธิ']) * 100).clip(upper=100.0).round(2).fillna(0)
 
-fig_trend = make_subplots(specs=[[{"secondary_y": True}]])
+    fig_trend = make_subplots(specs=[[{"secondary_y": True}]])
+    fig_trend.add_trace(go.Bar(x=daily['วันที่ผลิต'], y=daily['เป้าหมายสุทธิ'], name="Net Target", marker_color='#cbd5e1', opacity=0.7), secondary_y=False)
+    fig_trend.add_trace(go.Bar(x=daily['วันที่ผลิต'], y=daily['actual_qty'], name="Actual Qty", marker_color='#3b82f6'), secondary_y=False)
+    fig_trend.add_trace(go.Scatter(x=daily['วันที่ผลิต'], y=daily['% Achieve'], name="% Achieve", mode='lines+markers', line=dict(color='#ef4444', width=3), marker=dict(size=8, color='#ef4444', line=dict(width=2, color='white'))), secondary_y=True)
 
-# แท่งเป้าหมาย (สีอ่อน)
-fig_trend.add_trace(go.Bar(x=daily['วันที่ผลิต'], y=daily['เป้าหมายสุทธิ'], name="Net Target", marker_color='#cbd5e1', opacity=0.7), secondary_y=False)
-# แท่งผลิตจริง (สีน้ำเงิน)
-fig_trend.add_trace(go.Bar(x=daily['วันที่ผลิต'], y=daily['actual_qty'], name="Actual Qty", marker_color='#3b82f6'), secondary_y=False)
-# เส้นประสิทธิภาพ (สีแดงอมส้ม)
-fig_trend.add_trace(go.Scatter(x=daily['วันที่ผลิต'], y=daily['% Achieve'], name="% Achieve", mode='lines+markers', line=dict(color='#ef4444', width=3), marker=dict(size=8, color='#ef4444', line=dict(width=2, color='white'))), secondary_y=True)
+    fig_trend.update_layout(barmode='group', hovermode="x unified", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig_trend.update_yaxes(title_text="Quantity (Pcs)", showgrid=True, gridcolor='#f1f5f9', secondary_y=False)
+    fig_trend.update_yaxes(title_text="Achievement (%)", showgrid=False, range=[0, 115], secondary_y=True)
+    st.plotly_chart(fig_trend, use_container_width=True)
 
-fig_trend.update_layout(
-    barmode='group', hovermode="x unified",
-    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-    margin=dict(l=0, r=0, t=10, b=0),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    font=dict(family="sans-serif", color="#475569")
-)
-fig_trend.update_yaxes(title_text="Quantity (Pcs)", showgrid=True, gridcolor='#f1f5f9', secondary_y=False)
-fig_trend.update_yaxes(title_text="Achievement (%)", showgrid=False, range=[0, 115], secondary_y=True)
-
-st.plotly_chart(fig_trend, use_container_width=True)
+with col_util:
+    st.markdown("#### 🚜 Machine Utilization (รายเครื่องจักร)")
+    # หา Util รายเครื่อง
+    util_mach = df.groupby('Machine').agg({'Earned_Hours': 'sum'}).reset_index()
+    avail_mach = mach_daily.groupby('Machine').agg(Avail_Net=('mult_Net', 'sum')).reset_index()
+    avail_mach['Avail_Hours'] = avail_mach['Avail_Net'] * work_hours
+    util_mach = pd.merge(util_mach, avail_mach, on='Machine')
+    util_mach['Util (%)'] = (util_mach['Earned_Hours'] / util_mach['Avail_Hours'] * 100).clip(upper=100).fillna(0)
+    
+    # ดึง Top 10 มาแสดง
+    util_mach = util_mach.sort_values(by='Util (%)', ascending=False).head(10)
+    fig_util = px.bar(util_mach, x='Util (%)', y='Machine', orientation='h', text=util_mach['Util (%)'].apply(lambda x: f"{x:.1f}%"), color='Util (%)', color_continuous_scale=['#f43f5e', '#f59e0b', '#10b981'])
+    fig_util.update_traces(textposition='outside')
+    fig_util.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(t=10, b=0, l=0, r=0), xaxis_range=[0, 115], coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'})
+    st.plotly_chart(fig_util, use_container_width=True)
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -376,12 +396,10 @@ col_grp, col_top = st.columns([1.2, 1])
 
 with col_grp:
     st.markdown("### 📊 ประสิทธิภาพแยกกลุ่มเครื่องจักร (By Group)")
-    
     def ext_grp(mc):
         for g in ['INJ', 'INM', '510', 'VAC', '400T', '300T', '350T', 'PRESS']:
             if g in str(mc).upper(): return g
         return "OTHER"
-        
     df['Group'] = df['Machine'].apply(ext_grp)
     grp = df.groupby('Group').agg({'actual_qty': 'sum', 'เป้าหมายสุทธิ': 'sum'}).reset_index()
     grp['% Achieve'] = ((grp['actual_qty'] / grp['เป้าหมายสุทธิ']) * 100).clip(upper=100.0).round(2).fillna(0)
@@ -392,25 +410,17 @@ with col_grp:
         if "PRESS" in g: return 2
         if "VAC" in g: return 3
         return 4
-        
     grp['sort'] = grp['Group'].apply(prio)
     grp = grp.sort_values(by=['sort', 'Group'])
     
-    # ใช้สีระดับ Corporate (Slate -> Emerald)
-    fig_grp = px.bar(grp, x='Group', y='% Achieve', text=grp['% Achieve'].apply(lambda x: f"{x:.1f}%"),
-                     color='% Achieve', color_continuous_scale=['#f43f5e', '#f59e0b', '#10b981'])
+    fig_grp = px.bar(grp, x='Group', y='% Achieve', text=grp['% Achieve'].apply(lambda x: f"{x:.1f}%"), color='% Achieve', color_continuous_scale=['#f43f5e', '#f59e0b', '#10b981'])
     fig_grp.update_traces(textposition='outside', textfont=dict(weight='bold'))
-    fig_grp.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', 
-        margin=dict(t=20, b=0, l=0, r=0), yaxis_range=[0, 115],
-        coloraxis_showscale=False # ซ่อนแถบสีด้านข้างให้ดูสะอาด
-    )
+    fig_grp.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(t=20, b=0, l=0, r=0), yaxis_range=[0, 115], coloraxis_showscale=False)
     fig_grp.update_yaxes(showgrid=True, gridcolor='#f1f5f9')
     st.plotly_chart(fig_grp, use_container_width=True)
 
 with col_top:
     st.markdown("### 🏆 Top 5 ชิ้นงาน (Best & Worst Performers)")
-    
     pt = df.groupby('Part').agg({'actual_qty': 'sum', 'เป้าหมายสุทธิ': 'sum'}).reset_index()
     pt = pt[pt['เป้าหมายสุทธิ'] > 0]
     pt['% Achieve'] = ((pt['actual_qty'] / pt['เป้าหมายสุทธิ']) * 100).clip(upper=100.0).round(2).fillna(0)
@@ -419,14 +429,11 @@ with col_top:
     t_worst = pt.sort_values(by='% Achieve', ascending=True).head(5)
     
     tb1, tb2 = st.tabs(["⭐ 5 อันดับแรก (Top Performers)", "⚠️ 5 อันดับรั้งท้าย (Needs Attention)"])
-    
     fmt = {'actual_qty': '{:,.0f}', 'เป้าหมายสุทธิ': '{:,.0f}', '% Achieve': '{:.1f}%'}
     conf = {"% Achieve": st.column_config.ProgressColumn("Achieve (%)", format="%.1f%%", min_value=0, max_value=100)}
     
-    with tb1:
-        st.dataframe(t_best[['Part', 'actual_qty', 'เป้าหมายสุทธิ', '% Achieve']].style.format(fmt), use_container_width=True, hide_index=True, column_config=conf)
-    with tb2:
-        st.dataframe(t_worst[['Part', 'actual_qty', 'เป้าหมายสุทธิ', '% Achieve']].style.format(fmt), use_container_width=True, hide_index=True, column_config=conf)
+    with tb1: st.dataframe(t_best[['Part', 'actual_qty', 'เป้าหมายสุทธิ', '% Achieve']].style.format(fmt), use_container_width=True, hide_index=True, column_config=conf)
+    with tb2: st.dataframe(t_worst[['Part', 'actual_qty', 'เป้าหมายสุทธิ', '% Achieve']].style.format(fmt), use_container_width=True, hide_index=True, column_config=conf)
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -434,13 +441,11 @@ st.markdown("<hr>", unsafe_allow_html=True)
 # 📋 Section 4: Data Table & Export
 # ==========================================
 col_hdr, col_btn = st.columns([4, 1])
-with col_hdr:
-    st.markdown("### 📋 ข้อมูลการผลิตเชิงลึก (Detailed Production Data)")
+with col_hdr: st.markdown("### 📋 ข้อมูลการผลิตเชิงลึก (Detailed Production Data)")
 with col_btn:
     with st.popover("📤 Export Report", use_container_width=True):
         st.write("เลือกรูปแบบที่ต้องการ:")
-        
-        out_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'mult_Net', 'Setup_Count', 'เป้าหมายสุทธิ', '% Achieve']].sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
+        out_df = df[['วันที่ผลิต', 'Machine', 'Part', 'actual_qty', 'เป้าต่อวัน(3กะ)', 'mult_Net', 'Setup_Count', 'เป้าหมายสุทธิ', '% Achieve', 'Earned_Hours']].sort_values(by=['วันที่ผลิต', 'Machine'], ascending=[False, True])
         out_df.rename(columns={'mult_Net': 'อัตราส่วนกะ'}, inplace=True)
         
         buf = io.BytesIO()
@@ -464,6 +469,7 @@ st.dataframe(
         "อัตราส่วนกะ": st.column_config.NumberColumn("อัตราส่วนกะ", format="%.2f"),
         "Setup_Count": st.column_config.NumberColumn("ครั้งเปลี่ยน Part"),
         "เป้าหมายสุทธิ": st.column_config.NumberColumn("เป้าสุทธิ (Pcs)"),
-        "% Achieve": st.column_config.ProgressColumn("% Achieve", format="%.1f%%", min_value=0, max_value=100)
+        "% Achieve": st.column_config.ProgressColumn("% Achieve", format="%.1f%%", min_value=0, max_value=100),
+        "Earned_Hours": st.column_config.NumberColumn("เวลาผลงาน (ชม.)", format="%.1f")
     }
 )
