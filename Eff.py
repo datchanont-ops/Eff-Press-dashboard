@@ -260,7 +260,16 @@ with st.sidebar.expander("📅 ปรับตามวัน (By Date)", expand
     sd_val = st.selectbox("เปลี่ยนทุกวัน:", ["(ใช้ค่าเดิม)"] + list(shift_map.keys()), key='def_d')
     u_dates = sorted(df['วันที่ผลิต'].unique())
     s_d_data = [sd_val]*len(u_dates) if sd_val != "(ใช้ค่าเดิม)" else [get_valid_shift(saved_settings.get('shift_date', {}).get(str(d), "3 กะ (เป้า 100%)")) for d in u_dates]
-    df_sd = st.data_editor(pd.DataFrame({'Date': u_dates, 'Shift': s_d_data}), hide_index=True, use_container_width=True)
+    
+    # 📌 แก้ไขให้กดเลือก Dropdown ได้
+    df_sd = st.data_editor(
+        pd.DataFrame({'Date': u_dates, 'Shift': s_d_data}), 
+        column_config={
+            "Date": st.column_config.DateColumn("วันที่", disabled=True, format="DD/MM/YYYY"),
+            "Shift": st.column_config.SelectboxColumn("กะการทำงาน", options=list(shift_map.keys()), required=True)
+        },
+        hide_index=True, use_container_width=True, key='edit_date'
+    )
     df['mult_D'] = df['วันที่ผลิต'].map({row['Date']: shift_map.get(row['Shift'], 1.0) for _, row in df_sd.iterrows()})
 
 # 4.2 Machine
@@ -268,7 +277,16 @@ with st.sidebar.expander("🚜 ปรับตามเครื่อง (By Ma
     sm_val = st.selectbox("เปลี่ยนทุกเครื่อง:", ["(ใช้ค่าเดิม)"] + list(shift_map.keys()), key='def_m')
     u_macs = sorted(df['Machine'].unique())
     s_m_data = [sm_val]*len(u_macs) if sm_val != "(ใช้ค่าเดิม)" else [get_valid_shift(saved_settings.get('shift_mac', {}).get(m, "3 กะ (เป้า 100%)")) for m in u_macs]
-    df_sm = st.data_editor(pd.DataFrame({'Machine': u_macs, 'Shift': s_m_data}), hide_index=True, use_container_width=True)
+    
+    # 📌 แก้ไขให้กดเลือก Dropdown ได้
+    df_sm = st.data_editor(
+        pd.DataFrame({'Machine': u_macs, 'Shift': s_m_data}), 
+        column_config={
+            "Machine": st.column_config.TextColumn("ชื่อเครื่องจักร", disabled=True),
+            "Shift": st.column_config.SelectboxColumn("กะการทำงาน", options=list(shift_map.keys()), required=True)
+        },
+        hide_index=True, use_container_width=True, key='edit_mac'
+    )
     df['mult_M'] = df['Machine'].map({row['Machine']: shift_map.get(row['Shift'], 1.0) for _, row in df_sm.iterrows()})
 
 # 4.3 Spec
@@ -277,7 +295,18 @@ with st.sidebar.expander("🎯 ปรับเฉพาะกิจ (Date+Machin
     df_sp = pd.DataFrame(saved_spec) if saved_spec else pd.DataFrame(columns=["Date", "Machine", "Shift"])
     if not df_sp.empty and 'Shift' in df_sp.columns: df_sp['Shift'] = df_sp['Shift'].apply(get_valid_shift)
     if not df_sp.empty and 'Date' in df_sp.columns: df_sp['Date'] = pd.to_datetime(df_sp['Date']).dt.date
-    df_spec = st.data_editor(df_sp, num_rows="dynamic", column_config={"Date": st.column_config.DateColumn(format="DD/MM/YYYY"), "Shift": st.column_config.SelectboxColumn(options=list(shift_map.keys()))}, hide_index=True, use_container_width=True)
+    
+    # 📌 แก้ไขให้กดเลือก Dropdown และเพิ่มแถวได้
+    df_spec = st.data_editor(
+        df_sp, 
+        num_rows="dynamic", 
+        column_config={
+            "Date": st.column_config.DateColumn("วันที่", required=True, format="DD/MM/YYYY"), 
+            "Machine": st.column_config.SelectboxColumn("เครื่องจักร", options=sorted(df['Machine'].unique()), required=True),
+            "Shift": st.column_config.SelectboxColumn("กะการทำงาน", options=list(shift_map.keys()), required=True)
+        }, 
+        hide_index=True, use_container_width=True, key='edit_spec'
+    )
 
 # แจ้งเตือนปรับลดกะ
 adj_d = df_sd[df_sd['Shift'] != "3 กะ (เป้า 100%)"]
